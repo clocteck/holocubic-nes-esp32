@@ -11,7 +11,7 @@ typedef struct lua_State lua_State;
 
 typedef int (*module_lua_cfunction_t)(lua_State *L);
 
-#define MODULE_ABI_VERSION 0x00020000u
+#define MODULE_ABI_VERSION 0x00020001u
 #define MODULE_MANIFEST_MAGIC 0x414D4F44u /* "AMOD" */
 #define MODULE_NAME_MAX 32u
 #define MODULE_PATH_MAX 160u
@@ -197,11 +197,13 @@ typedef struct module_display_api_t {
     int32_t (*get_caps)(module_display_caps_t *out_caps);
     int32_t (*acquire)(const char *owner, const module_display_desc_t *desc, void **out_surface);
     int32_t (*release)(void *surface);
-    int32_t (*start_write)(void *surface);
-    int32_t (*push_image_dma)(void *surface, int16_t x, int16_t y,
-                              uint16_t w, uint16_t h, const uint16_t *pixels);
-    int32_t (*end_write)(void *surface);
-    int32_t (*fill_screen)(void *surface, uint16_t color);
+    int32_t (*startWrite)(void *surface);
+    int32_t (*pushImageDMA)(void *surface, int16_t x, int16_t y,
+                            uint16_t w, uint16_t h, const uint16_t *pixels);
+    int32_t (*endWrite)(void *surface);
+    int32_t (*fillScreen)(void *surface, uint16_t color);
+    int32_t (*setAddrWindow)(void *surface, int32_t x, int32_t y, int32_t w, int32_t h);
+    int32_t (*pushPixelsDMA)(void *surface, const uint16_t *pixels, size_t len);
 } module_display_api_t;
 
 typedef struct module_audio_api_t {

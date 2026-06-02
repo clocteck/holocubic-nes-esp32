@@ -55,12 +55,9 @@ private:
     bool allocDmaBuffers(const module_host_api_v1 *host, String *err);
     void freeDmaBuffers(const module_host_api_v1 *host);
     bool startWrite(String *err = nullptr);
-    bool pushImageDMA(const module_display_chunk_t *chunk,
-                      int16_t x,
-                      int16_t y,
-                      uint16_t w,
-                      uint16_t h,
-                      String *err = nullptr);
+    bool pushPixelsDMA(const module_display_chunk_t *chunk,
+                       uint16_t row_count,
+                       String *err = nullptr);
     bool dmaWait(String *err = nullptr);
     uint16_t sanitizeTransferRows(uint16_t transfer_rows, uint16_t frame_height) const;
 

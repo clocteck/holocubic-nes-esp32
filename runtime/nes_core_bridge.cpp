@@ -107,6 +107,10 @@ public:
         {
             m_options.height = 240;
         }
+        if (m_options.transfer_rows == 0)
+        {
+            m_options.transfer_rows = nes::config::kDefaultTransferRows;
+        }
         if (m_options.target_fps == 0)
         {
             m_options.target_fps = 60;
@@ -320,6 +324,7 @@ public:
         out->task_stack_ptr = m_task_stack_ptr;
         out->step_pending = m_step_frames;
         out->stage = m_stage;
+        out->transfer_rows = m_video.active() ? m_video.spec().transfer_rows : m_options.transfer_rows;
         out->display_stream_supported = m_video.streamSupported() ? 1 : 0;
         out->display_stream_active = m_video.streamActive() ? 1 : 0;
         out->display_stream_slots = m_video.streamSlots();
@@ -375,6 +380,7 @@ private:
 
         m_state = m_paused ? CorePaused : CoreRunning;
         const uint32_t frame_us = m_options.target_fps > 0 ? (1000000u / m_options.target_fps) : 16666u;
+        uint64_t next_frame_due = nes_port_micros();
         while (!m_stop_requested)
         {
             if (m_prepare_requested)
@@ -384,6 +390,7 @@ private:
                 m_prepare_requested = false;
                 m_paused = true;
                 m_state = m_prepare_result == 1 ? CorePaused : CoreError;
+                next_frame_due = nes_port_micros();
                 continue;
             }
 
@@ -391,6 +398,7 @@ private:
             if (m_paused && !single_step)
             {
                 m_state = CorePaused;
+                next_frame_due = nes_port_micros();
                 nes_port_delay(20);
                 continue;
             }
@@ -407,6 +415,10 @@ private:
             m_prepare_level = 0;
 
             const uint64_t frame_start = nes_port_micros();
+            if (frame_start > next_frame_due + ((uint64_t)frame_us * 4u))
+            {
+                next_frame_due = frame_start;
+            }
             setStage(StageFrameBegin, "[nes.so] frame begin");
             pollInput();
             if (m_bus)
@@ -437,15 +449,23 @@ private:
             }
             setStage(StageFrameDone, "[nes.so] frame done");
 
-            const uint64_t elapsed = nes_port_micros() - frame_start;
-            if (elapsed < frame_us)
+            const uint64_t frame_end = nes_port_micros();
+            next_frame_due += frame_us;
+            if (frame_end < next_frame_due)
             {
-                const uint32_t sleep_us = frame_us - (uint32_t)elapsed;
+                const uint32_t sleep_us = (uint32_t)(next_frame_due - frame_end);
                 nes_port_delay(sleep_us / 1000u);
             }
-            else if (m_host && m_host->task.yield)
+            else
             {
-                m_host->task.yield();
+                if (frame_end > next_frame_due + ((uint64_t)frame_us * 4u))
+                {
+                    next_frame_due = frame_end;
+                }
+                if (m_host && m_host->task.yield)
+                {
+                    m_host->task.yield();
+                }
             }
         }
 
@@ -480,7 +500,7 @@ private:
         spec.width = m_options.width;
         spec.height = m_options.height;
         spec.center_on_screen = false;
-        spec.transfer_rows = nes::config::kDefaultTransferRows;
+        spec.transfer_rows = m_options.transfer_rows;
 
         String err;
         setStage(StageVideoBegin, "[nes.so] video begin");

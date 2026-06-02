@@ -14,6 +14,7 @@ typedef struct nes_core_options_t {
     uint16_t y;
     uint16_t width;
     uint16_t height;
+    uint16_t transfer_rows;
     uint32_t target_fps;
     uint32_t task_stack_bytes;
     uint32_t task_priority;
@@ -35,6 +36,7 @@ typedef struct nes_core_status_t {
     uint32_t task_stack_ptr;
     uint32_t step_pending;
     uint32_t stage;
+    uint16_t transfer_rows;
     uint8_t display_stream_supported;
     uint8_t display_stream_active;
     uint8_t display_stream_slots;

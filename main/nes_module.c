@@ -1,6 +1,5 @@
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 #if __has_include("module_abi.h")
@@ -14,6 +13,7 @@
 #define NES_FRAME_WIDTH 256
 #define NES_FRAME_HEIGHT 240
 #define NES_DEFAULT_FPS 30
+#define NES_DEFAULT_TRANSFER_ROWS 16
 #define NES_DEFAULT_TASK_STACK (12u * 1024u)
 #define NES_DEFAULT_TASK_PRIORITY 3u
 #define NES_DEFAULT_TASK_CORE 1
@@ -90,6 +90,7 @@ typedef struct nes_session_t {
     uint16_t y;
     uint16_t width;
     uint16_t height;
+    uint16_t transfer_rows;
     uint32_t target_fps;
     uint32_t task_stack_bytes;
     uint32_t task_priority;
@@ -115,6 +116,62 @@ static const module_manifest_t s_manifest = {
     0,
     MODULE_ABI_VERSION,
 };
+
+static int host_abi_is_compatible(const module_host_api_v1 *host)
+{
+    const uint32_t module_major = MODULE_ABI_VERSION & 0xFFFF0000u;
+    if (!host) {
+        return 0;
+    }
+    if ((host->abi_version & 0xFFFF0000u) != module_major) {
+        return 0;
+    }
+    return host->abi_version >= MODULE_ABI_VERSION;
+}
+
+static void append_text(char *dst, size_t dst_size, size_t *pos, const char *text)
+{
+    if (!dst || dst_size == 0 || !pos || !text) {
+        return;
+    }
+    while (*text && *pos + 1 < dst_size) {
+        dst[*pos] = *text;
+        *pos = *pos + 1;
+        ++text;
+    }
+    dst[*pos] = '\0';
+}
+
+static void append_hex32(char *dst, size_t dst_size, size_t *pos, uint32_t value)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    int shift;
+    append_text(dst, dst_size, pos, "0x");
+    for (shift = 28; shift >= 0; shift -= 4) {
+        if (!dst || !pos || *pos + 1 >= dst_size) {
+            return;
+        }
+        dst[*pos] = hex[(value >> shift) & 0x0Fu];
+        *pos = *pos + 1;
+        dst[*pos] = '\0';
+    }
+}
+
+static void log_host_abi_mismatch(const module_host_api_v1 *host)
+{
+    const size_t serial_end = offsetof(module_host_api_v1, serial) + sizeof(host->serial);
+    char msg[96];
+    size_t pos = 0;
+    if (!host || host->size < serial_end || !host->serial.println) {
+        return;
+    }
+    msg[0] = '\0';
+    append_text(msg, sizeof(msg), &pos, "[nes.so] ABI mismatch host=");
+    append_hex32(msg, sizeof(msg), &pos, host->abi_version);
+    append_text(msg, sizeof(msg), &pos, " module=");
+    append_hex32(msg, sizeof(msg), &pos, MODULE_ABI_VERSION);
+    host->serial.println(msg);
+}
 
 /**
  * @brief Copy a C string into a fixed buffer.
@@ -272,6 +329,7 @@ static void session_set_defaults(nes_session_t *session)
     session->y = 0;
     session->width = NES_FRAME_WIDTH;
     session->height = NES_FRAME_HEIGHT;
+    session->transfer_rows = NES_DEFAULT_TRANSFER_ROWS;
     session->target_fps = NES_DEFAULT_FPS;
     session->task_stack_bytes = NES_DEFAULT_TASK_STACK;
     session->task_priority = NES_DEFAULT_TASK_PRIORITY;
@@ -497,6 +555,17 @@ static void apply_u32_option(int64_t value, uint32_t min_value, uint32_t max_val
     }
 }
 
+static uint16_t clamp_transfer_rows_option(int64_t value)
+{
+    if (value <= 0) {
+        return NES_DEFAULT_TRANSFER_ROWS;
+    }
+    if (value > NES_FRAME_HEIGHT) {
+        return NES_FRAME_HEIGHT;
+    }
+    return (uint16_t)value;
+}
+
 /**
  * @brief Apply Lua create/start options to the session.
  */
@@ -513,6 +582,9 @@ static void apply_options(lua_State *L, const module_host_api_v1 *host, nes_sess
 
     if (read_table_integer(L, host, table_index, "fps", &n)) {
         apply_u32_option(n, 1, 60, &session->target_fps);
+    }
+    if (read_table_integer(L, host, table_index, "transfer_rows", &n)) {
+        session->transfer_rows = clamp_transfer_rows_option(n);
     }
     if (read_table_integer(L, host, table_index, "task_stack", &n)) {
         apply_u32_option(n, 4096, 32768, &session->task_stack_bytes);
@@ -540,6 +612,9 @@ static void apply_options(lua_State *L, const module_host_api_v1 *host, nes_sess
         }
         if (read_table_integer(L, host, video_index, "y", &n)) {
             session->y = (n < 0) ? 0 : (uint16_t)n;
+        }
+        if (read_table_integer(L, host, video_index, "transfer_rows", &n)) {
+            session->transfer_rows = clamp_transfer_rows_option(n);
         }
     }
     host->lua.settop(L, top);
@@ -636,6 +711,7 @@ static void session_sync_runtime(nes_session_t *session)
     session->task_stack_ptr = status.task_stack_ptr;
     session->step_pending = status.step_pending;
     session->stage = status.stage;
+    session->transfer_rows = status.transfer_rows;
     session->display_stream_supported = status.display_stream_supported;
     session->display_stream_active = status.display_stream_active;
     session->display_stream_slots = status.display_stream_slots;
@@ -701,6 +777,7 @@ static int session_start(nes_session_t *session)
     options.y = session->y;
     options.width = session->width;
     options.height = session->height;
+    options.transfer_rows = session->transfer_rows;
     options.target_fps = session->target_fps;
     options.task_stack_bytes = session->task_stack_bytes;
     options.task_priority = session->task_priority;
@@ -823,6 +900,7 @@ static void push_session_info(lua_State *L, const module_host_api_v1 *host, nes_
     set_integer_field(L, host, "y", session->y);
     set_integer_field(L, host, "width", session->width);
     set_integer_field(L, host, "height", session->height);
+    set_integer_field(L, host, "transfer_rows", session->transfer_rows);
     set_integer_field(L, host, "fps", session->target_fps);
     set_integer_field(L, host, "task_stack", session->task_stack_bytes);
     set_integer_field(L, host, "task_stack_ptr", session->task_stack_ptr);
@@ -1270,11 +1348,19 @@ NES_MODULE_EXPORT int32_t module_create_v1(const module_host_api_v1 *host,
                                            void **out_instance)
 {
     nes_module_instance_t *inst = NULL;
-    if (!host || !out_instance || host->abi_version != MODULE_ABI_VERSION) {
+    if (!out_instance) {
         return MODULE_ERR_INVALID_ARG;
     }
 
     *out_instance = NULL;
+    if (!host) {
+        return MODULE_ERR_INVALID_ARG;
+    }
+    if (!host_abi_is_compatible(host)) {
+        log_host_abi_mismatch(host);
+        return MODULE_ERR_VERSION;
+    }
+
     s_host = host;
     inst = (nes_module_instance_t *)host->heap.calloc(1,
                                                       sizeof(nes_module_instance_t),

@@ -67,7 +67,7 @@ private:
     void incrementY();
     void finishScanline();
     void emitMapperIrqA12Pulse();
-    uint16_t scanline_buffer[BUFFER_SIZE];
+    uint8_t scanline_buffer[BUFFER_SIZE];
     uint8_t scanline_metadata[BUFFER_SIZE];
     uint8_t nametable[4096];
     uint8_t* ptr_nametable[4];
@@ -849,7 +849,7 @@ private:
 
 public:
     uint8_t* ptr_sprite = (uint8_t*)sprite;
-    uint16_t* ptr_buffer = scanline_buffer;
+    uint8_t* ptr_buffer = scanline_buffer;
     uint16_t *ptr_display = nullptr;
     uint16_t display_rows = 0;
 };

@@ -1,2 +1,8 @@
 # Enable ESP-ELFLoader shared object output so project_so(nes) generates build/nes.so.
 CONFIG_ELF_DYNAMIC_LOAD_SHARED_OBJECT=y
+
+# Build the shared object with performance optimization instead of debug (-Og).
+# CONFIG_COMPILER_OPTIMIZATION_DEBUG is not set
+# CONFIG_COMPILER_OPTIMIZATION_SIZE is not set
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# CONFIG_COMPILER_OPTIMIZATION_NONE is not set

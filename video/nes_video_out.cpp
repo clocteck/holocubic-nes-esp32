@@ -60,11 +60,12 @@ bool NesVideoOut::hasTftStreamApi(const module_host_api_v1 *host) const
     {
         return false;
     }
-    const size_t need = offsetof(module_display_api_t, fill_screen) + sizeof(host->display.fill_screen);
+    const size_t need = offsetof(module_display_api_t, pushPixelsDMA) + sizeof(host->display.pushPixelsDMA);
     return host->display.size >= need &&
-           host->display.start_write &&
-           host->display.push_image_dma &&
-           host->display.end_write;
+           host->display.startWrite &&
+           host->display.setAddrWindow &&
+           host->display.pushPixelsDMA &&
+           host->display.endWrite;
 }
 
 bool NesVideoOut::allocDmaBuffers(const module_host_api_v1 *host, String *err)
@@ -131,21 +132,28 @@ bool NesVideoOut::startWrite(String *err)
         setError(err, "display stream api unavailable");
         return false;
     }
-    if (host->display.start_write(m_surface) != MODULE_OK)
+    if (host->display.startWrite(m_surface) != MODULE_OK)
     {
         setError(err, "begin display stream failed");
+        return false;
+    }
+    if (host->display.setAddrWindow(m_surface,
+                                    m_target_x,
+                                    m_target_y,
+                                    m_spec.width,
+                                    m_spec.height) != MODULE_OK)
+    {
+        (void)host->display.endWrite(m_surface);
+        setError(err, "set display window failed");
         return false;
     }
     m_stream_active = true;
     return true;
 }
 
-bool NesVideoOut::pushImageDMA(const module_display_chunk_t *chunk,
-                               int16_t x,
-                               int16_t y,
-                               uint16_t w,
-                               uint16_t h,
-                               String *err)
+bool NesVideoOut::pushPixelsDMA(const module_display_chunk_t *chunk,
+                                uint16_t row_count,
+                                String *err)
 {
     const module_host_api_v1 *host = nes_port_host();
     if (!m_surface || !host || !chunk || !chunk->pixels)
@@ -153,48 +161,28 @@ bool NesVideoOut::pushImageDMA(const module_display_chunk_t *chunk,
         setError(err, "display push without pixels");
         return false;
     }
-
-    if (m_stream_supported)
+    if (!m_stream_supported || !host->display.pushPixelsDMA)
     {
-        if (!startWrite(err))
-        {
-            m_stream_supported = false;
-        }
-        else
-        {
-            const int32_t ret = host->display.push_image_dma(m_surface,
-                                                             x,
-                                                             y,
-                                                             w,
-                                                             h,
-                                                             (const uint16_t *)chunk->pixels);
-            if (ret != MODULE_OK)
-            {
-                (void)dmaWait(nullptr);
-                setError(err, "push display dma failed");
-                return false;
-            }
-            m_stream_queued++;
-            return true;
-        }
-    }
-
-    if (!host->display.push_image_dma)
-    {
-        setError(err, "display push api unavailable");
+        setError(err, "display pushPixelsDMA api unavailable");
         return false;
     }
-    const int32_t ret = host->display.push_image_dma(m_surface,
-                                                     x,
-                                                     y,
-                                                     w,
-                                                     h,
-                                                     (const uint16_t *)chunk->pixels);
+
+    if (!startWrite(err))
+    {
+        return false;
+    }
+
+    const size_t pixels = (size_t)m_spec.width * (size_t)row_count;
+    const int32_t ret = host->display.pushPixelsDMA(m_surface,
+                                                    (const uint16_t *)chunk->pixels,
+                                                    pixels);
     if (ret != MODULE_OK)
     {
-        setError(err, "display push failed");
+        (void)dmaWait(nullptr);
+        setError(err, "push display pixels failed");
         return false;
     }
+    m_stream_queued++;
     return true;
 }
 
@@ -206,7 +194,7 @@ bool NesVideoOut::dmaWait(String *err)
         m_stream_queued = 0;
         return true;
     }
-    if (!host || !host->display.end_write)
+    if (!host || !host->display.endWrite)
     {
         m_stream_active = false;
         m_stream_queued = 0;
@@ -214,7 +202,7 @@ bool NesVideoOut::dmaWait(String *err)
         return false;
     }
 
-    const int32_t ret = host->display.end_write(m_surface);
+    const int32_t ret = host->display.endWrite(m_surface);
     m_stream_active = false;
     m_stream_queued = 0;
     if (ret != MODULE_OK)
@@ -321,11 +309,6 @@ bool NesVideoOut::acquireTransferChunk(TransferChunk *out_chunk, String *err)
         setError(err, "display inactive");
         return false;
     }
-    if (m_stream_queued >= kDmaSlotCount && !dmaWait(err))
-    {
-        return false;
-    }
-
     m_preparing_slot = m_next_slot;
     DmaSlot *slot = &m_slots[m_preparing_slot];
     if (!slot->pixels || slot->chunk.rows == 0)
@@ -365,12 +348,7 @@ bool NesVideoOut::submitTransferChunk(uint16_t start_row, uint16_t row_count, St
     m_chunk.pixel_format = MODULE_PIXEL_RGB565;
 
     const bool frame_end = ((uint32_t)start_row + (uint32_t)row_count) >= (uint32_t)m_spec.height;
-    if (!pushImageDMA(&m_chunk,
-                      m_target_x,
-                      (int16_t)(m_target_y + start_row),
-                      m_spec.width,
-                      row_count,
-                      err))
+    if (!pushPixelsDMA(&m_chunk, row_count, err))
     {
         m_has_chunk = false;
         return false;
@@ -378,8 +356,7 @@ bool NesVideoOut::submitTransferChunk(uint16_t start_row, uint16_t row_count, St
 
     m_next_slot = (uint8_t)((m_preparing_slot + 1u) % kDmaSlotCount);
     m_has_chunk = false;
-    if ((m_stream_supported && (frame_end || m_stream_queued >= kDmaSlotCount)) &&
-        !dmaWait(err))
+    if (m_stream_supported && frame_end && !dmaWait(err))
     {
         return false;
     }

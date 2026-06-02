@@ -191,28 +191,22 @@ inline void Ppu2C02::renderBackground()
     // Show transparency pixel if not rendering background
     if (!mask.render_background)
     {
-        const uint16_t bg_color = nes_palette[mask.emphasize][palette_table[0]];
-        const uint32_t bg_color_pair = bg_color | ((uint32_t)bg_color << 16);
-        uint32_t* buffer = (uint32_t*)scanline_buffer;
-        for (int i = 0, size = (BUFFER_SIZE >> 1); i < size; i++)
-        {
-            buffer[i] = bg_color_pair;
-        }
+        uint8_t bg_color = palette_table[0];
+        memset(scanline_buffer, bg_color, BUFFER_SIZE);
         memset(scanline_metadata, 0x80, BUFFER_SIZE);
         ptr_buffer = scanline_buffer + x;
         ptr_scanline_meta = scanline_metadata + x;
         return;
     }
 
-    uint8_t x_tile, y_tile, tile_index, nametable_index;
+    uint8_t x_tile, y_tile, tile_index, nametable_index, bg_color;
     uint8_t attribute_byte, attribute_shift, attribute;
-    uint16_t bg_color;
     uint16_t offset, nametable_byte_base, attribute_byte_base;
     uint8_t* ptr_pattern_tile;
     uint8_t* ptr_attribute;
     uint8_t* ptr_tile;
 
-    bg_color = nes_palette[mask.emphasize][palette_table[0]];
+    bg_color = palette_table[0];
     ptr_buffer = scanline_buffer;
     ptr_scanline_meta = scanline_metadata;
     x_tile = v.coarse_x;
@@ -239,9 +233,9 @@ inline void Ppu2C02::renderBackground()
         // draw to framebuffer
         uint16_t pattern = ((ptr_pattern_tile[8] & 0xAA) << 8) | ((ptr_pattern_tile[8] & 0x55) << 1)
                     | ((ptr_pattern_tile[0] & 0xAA) << 7) | (ptr_pattern_tile[0] & 0x55);
-        uint16_t tile_palette[4];
+        uint8_t tile_palette[4];
         tile_palette[0] = bg_color;
-        for (int t = 1; t < 4; t++) tile_palette[t] = nes_palette[mask.emphasize][READ_PALETTE(attribute + t)];
+        for (int t = 1; t < 4; t++) tile_palette[t] = READ_PALETTE(attribute + t);
         for (int i = 0; i < 8; i++)
         {   
             uint8_t pixel = (pattern >> pixel_shift[i]) & 3;
@@ -292,20 +286,19 @@ inline void Ppu2C02::renderSprites()
     }
 
     OAM* ptr_sprite_OAM;
-    uint16_t* buffer_offset;
+    uint8_t* buffer_offset;
     uint8_t* metadata_offset;
     uint8_t* ptr_tile;
     uint8_t sprite_x, sprite_y;
     uint8_t sprite_size;
     uint8_t sprite_count = 0;
-    uint8_t tile_index, attribute_byte, attribute, palette_offset;
-    uint16_t bg_color;
+    uint8_t tile_index, bg_color, attribute_byte, attribute, palette_offset;
     uint8_t pixel[8];
-    uint16_t tile_palette[4];
+    uint8_t tile_palette[4];
     uint16_t offset, tile_addr, pattern;
     int16_t y_offset;
 
-    bg_color = nes_palette[mask.emphasize][palette_table[0]];
+    bg_color = palette_table[0];
     tile_palette[0] = bg_color;
 
     ptr_sprite_OAM = sprite;
@@ -350,7 +343,7 @@ inline void Ppu2C02::renderSprites()
         if (pattern)
         {
             palette_offset = 16 + attribute;
-            for (int t = 1; t < 4; t++) tile_palette[t] = nes_palette[mask.emphasize][READ_PALETTE(palette_offset + t)];
+            for (int t = 1; t < 4; t++) tile_palette[t] = READ_PALETTE(palette_offset + t);
 
             if (attribute_byte & 0x40) // If flip sprite horizontally
             {
@@ -657,10 +650,13 @@ inline void Ppu2C02::finishScanline()
     }
 
     uint32_t* display = (uint32_t*)(ptr_display + (scanline_counter * SCANLINE_SIZE));
-    uint32_t* buffer = (uint32_t*)ptr_buffer;
+    uint8_t* buffer = ptr_buffer;
+    const uint16_t* palette = nes_palette[mask.emphasize];
     for (int i = 0, size = (SCANLINE_SIZE >> 1); i < size; i++)
     {
-        display[i] = buffer[i];
+        const uint32_t color0 = palette[*buffer++];
+        const uint32_t color1 = palette[*buffer++];
+        display[i] = color0 | (color1 << 16);
     }
     scanline_counter++;
 
