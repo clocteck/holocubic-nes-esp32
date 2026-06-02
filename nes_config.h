@@ -65,7 +65,7 @@ namespace nes::config
 static constexpr uint16_t kDefaultFrameWidth = 256;
 static constexpr uint16_t kDefaultFrameHeight = 240;
 static constexpr uint16_t kDefaultTargetFps = 60;
-static constexpr uint16_t kDefaultTransferRows = 48;
+static constexpr uint16_t kDefaultTransferRows = 16;
 static constexpr bool kDefaultDirectRender = true;
 
 static constexpr bool kDefaultAudioEnabled = false;

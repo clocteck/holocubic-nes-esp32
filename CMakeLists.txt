@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Build only the module component and elf_loader helper component. Pulling every
+# IDF component makes the shared-object target slower and can fail in unrelated
+# components that are never linked into nes.so.
+set(COMPONENTS main espressif__elf_loader lwip)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(nes)
 

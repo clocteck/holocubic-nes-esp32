@@ -3,8 +3,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#if __has_include("module_abi.h")
 #include "module_abi.h"
-#include "runtime/nes_core_bridge.h"
+#else
+#include "../include/module_abi.h"
+#endif
+#include "../runtime/nes_core_bridge.h"
 
 #define NES_VERSION "0.1.0"
 #define NES_FRAME_WIDTH 256

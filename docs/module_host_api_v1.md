@@ -110,7 +110,7 @@ end_write
 release
 ```
 
-`start_write / push_image_dma / end_write` 用于 DMA 分块提交；NES 自己维护 16 行双缓冲，提交给 host 的像素块必须是连续 RGB565 数据。
+`start_write / push_image_dma / end_write` 用于 DMA 分块提交；NES 会使用双槽缓冲，并按可配置的 `transfer_rows` 分块提交给 host，提交给 host 的像素块必须是连续 RGB565 数据。
 
 ### audio
 

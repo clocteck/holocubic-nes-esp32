@@ -6,6 +6,29 @@
 namespace nes::video
 {
 
+uint16_t NesVideoOut::sanitizeTransferRows(uint16_t transfer_rows, uint16_t frame_height) const
+{
+    const uint16_t safe_height = frame_height == 0 ? nes::config::kDefaultFrameHeight : frame_height;
+    uint16_t rows = transfer_rows;
+
+    if (transfer_rows == 0)
+    {
+        rows = nes::config::kDefaultTransferRows;
+    }
+
+    if (rows > safe_height)
+    {
+        return safe_height;
+    }
+
+    if (rows == 0)
+    {
+        return 1;
+    }
+
+    return rows;
+}
+
 void NesVideoOut::init()
 {
 }
@@ -53,7 +76,8 @@ bool NesVideoOut::allocDmaBuffers(const module_host_api_v1 *host, String *err)
     }
 
     const uint16_t width = m_spec.width ? m_spec.width : 256;
-    const size_t pixels = (size_t)width * (size_t)kDmaRows;
+    const uint16_t rows = sanitizeTransferRows(m_spec.transfer_rows, m_spec.height);
+    const size_t pixels = (size_t)width * (size_t)rows;
     const size_t bytes = pixels * sizeof(uint16_t);
 
     for (uint8_t i = 0; i < kDmaSlotCount; ++i)
@@ -74,7 +98,7 @@ bool NesVideoOut::allocDmaBuffers(const module_host_api_v1 *host, String *err)
         memset(&m_slots[i].chunk, 0, sizeof(m_slots[i].chunk));
         m_slots[i].chunk.size = sizeof(m_slots[i].chunk);
         m_slots[i].chunk.pixels = buf;
-        m_slots[i].chunk.rows = kDmaRows;
+        m_slots[i].chunk.rows = rows;
         m_slots[i].chunk.width = width;
         m_slots[i].chunk.pitch_bytes = (uint32_t)width * sizeof(uint16_t);
         m_slots[i].chunk.pixel_format = MODULE_PIXEL_RGB565;
@@ -220,18 +244,6 @@ bool NesVideoOut::begin(const nes::VideoSpec &spec,
 
     end();
 
-    module_display_desc_t desc = {};
-    desc.size = sizeof(desc);
-    desc.width = spec.width;
-    desc.height = spec.height;
-    desc.pixel_format = MODULE_PIXEL_RGB565;
-
-    if (host->display.acquire("nes", &desc, &m_surface) != MODULE_OK || !m_surface)
-    {
-        setError(err, "display busy");
-        return false;
-    }
-
     m_spec = spec;
     if (m_spec.width == 0)
     {
@@ -241,7 +253,8 @@ bool NesVideoOut::begin(const nes::VideoSpec &spec,
     {
         m_spec.height = 240;
     }
-    m_spec.transfer_rows = kDmaRows;
+    m_spec.transfer_rows = sanitizeTransferRows(spec.transfer_rows,
+                                               m_spec.height);
     m_target_x = target_x;
     m_target_y = target_y;
     m_has_chunk = false;
@@ -255,13 +268,22 @@ bool NesVideoOut::begin(const nes::VideoSpec &spec,
 
     if (!allocDmaBuffers(host, err))
     {
-        if (m_surface && host->display.release)
-        {
-            (void)host->display.release(m_surface);
-        }
-        m_surface = nullptr;
         return false;
     }
+
+    module_display_desc_t desc = {};
+    desc.size = sizeof(desc);
+    desc.width = m_spec.width;
+    desc.height = m_spec.height;
+    desc.pixel_format = MODULE_PIXEL_RGB565;
+
+    if (host->display.acquire("nes", &desc, &m_surface) != MODULE_OK || !m_surface)
+    {
+        freeDmaBuffers(host);
+        setError(err, "display busy");
+        return false;
+    }
+
     return true;
 }
 

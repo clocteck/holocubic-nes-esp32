@@ -53,7 +53,7 @@
 4. 原工程内嵌路径 `../../../../src/dynmod/module_abi.h`。
 
 ## 编译
-
+具体构建方法可以参考ESP elf-loader 官方说明
 PowerShell 示例：
 
 ```powershell
@@ -211,9 +211,7 @@ host.lua.*
 ## 当前限制
 
 - 音频暂未接入，`nes.AUDIO == false`。
-- 当前 `.so` 内只开放单个 NES 会话实例。
 - NES 2.0 ROM 暂不支持。
-- 性能和兼容性取决于宿主固件的显示 DMA、任务栈内存位置和 PSRAM/内部 RAM 分配策略。
 - `module_abi.h` 必须和宿主固件完全匹配，否则可能加载失败或运行异常。
 
 ## 致谢

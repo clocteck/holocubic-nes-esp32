@@ -42,7 +42,6 @@ public:
 
 private:
     static constexpr uint8_t kDmaSlotCount = 2;
-    static constexpr uint16_t kDmaRows = 16;
 
     struct DmaSlot
     {
@@ -63,6 +62,7 @@ private:
                       uint16_t h,
                       String *err = nullptr);
     bool dmaWait(String *err = nullptr);
+    uint16_t sanitizeTransferRows(uint16_t transfer_rows, uint16_t frame_height) const;
 
     void *m_surface = nullptr;
     nes::VideoSpec m_spec = {};
