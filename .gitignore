@@ -1,0 +1,26 @@
+# ESP-IDF and CMake outputs
+build/
+build_*/
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+
+# Generated binaries
+*.a
+*.bin
+*.elf
+*.map
+*.o
+*.so
+
+# ROMs and local SD-card payloads
+*.nes
+*.NES
+sd/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
