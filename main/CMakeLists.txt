@@ -1,12 +1,12 @@
 set(NES_MODULE_ROOT "${CMAKE_CURRENT_LIST_DIR}/..")
 set(MODULE_ABI_DIR "" CACHE PATH "Directory containing module_abi.h")
 
-if(NOT MODULE_ABI_DIR AND EXISTS "${NES_MODULE_ROOT}/include/module_abi.h")
-    set(MODULE_ABI_DIR "${NES_MODULE_ROOT}/include")
+if(NOT MODULE_ABI_DIR AND DEFINED ENV{CUBICLUA_ROOT} AND EXISTS "$ENV{CUBICLUA_ROOT}/src/dynmod/module_abi.h")
+    set(MODULE_ABI_DIR "$ENV{CUBICLUA_ROOT}/src/dynmod")
 endif()
 
-if(NOT MODULE_ABI_DIR AND DEFINED ENV{CUBICLUA_ROOT})
-    set(MODULE_ABI_DIR "$ENV{CUBICLUA_ROOT}/src/dynmod")
+if(NOT MODULE_ABI_DIR AND EXISTS "${NES_MODULE_ROOT}/include/module_abi.h")
+    set(MODULE_ABI_DIR "${NES_MODULE_ROOT}/include")
 endif()
 
 if(NOT MODULE_ABI_DIR AND EXISTS "${NES_MODULE_ROOT}/../../../../src/dynmod/module_abi.h")

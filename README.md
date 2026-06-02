@@ -1,21 +1,16 @@
 # Holocubic NES Dynamic Module
 
 这是一个给 Clocteck Holocubic / cubic Lua 固件使用的 NES 动态模块。模块会被 ESP-ELFLoader 加载为 `nes.so`，Lua app 通过 `require("/sd/modules/nes.so")` 调用它。
+只能在Clocteck Holocubic 设备上运行，可以参考视频 https://www.bilibili.com/video/BV1Jv5v6TED9。
 
-本项目的 NES CPU、PPU、mapper 和渲染链路参考了 [Shim06/Anemoia-ESP32](https://github.com/Shim06/Anemoia-ESP32)。Anemoia-ESP32 在 GitHub 上标注为 GNU GPL v3.0，本项目也采用 GPL-3.0 协议，见 [LICENSE](LICENSE)。
-
-项目不包含任何商业游戏 ROM。
-cubic Lua 说明在另外项目中可以参考
 
 ## 特性
 
 - 以 `module_host_api_v1` 作为唯一宿主 ABI。
 - 通过 ESP-ELFLoader 构建和加载 `.so`。
-- Lua 侧提供 NodeMCU 风格 API：`nes.create()`、`emu:start()`、`emu:stop()`、`emu:set_input_mask()` 等。
-- 显示输出使用 RGB565 分块 DMA/stream 推屏。
 - 示例 Lua app 支持从 `/sd/nes` 扫描 ROM，并使用 Xbox BLE 手柄映射 NES 输入。
-
-当前支持 mapper：`0, 1, 2, 3, 4, 7, 15, 69, 226`。
+- 在设备上可以跑到50帧左右
+- 当前支持 mapper：`0, 1, 2, 3, 4, 7, 15, 69, 226`。
 
 ## 目录结构
 
@@ -23,9 +18,11 @@ cubic Lua 说明在另外项目中可以参考
 .
 ├── core/                  NES CPU/PPU/APU/cartridge/mapper 核心
 ├── main/                  ESP-ELFLoader 模块入口和 ESP-IDF component 配置
-├── port/                  面向 NES core 的 Arduino 兼容 shim，底层转发到 host API
+├── port/                  面向 NES core 的 Arduino 兼容接口
 ├── runtime/               C 接口到 C++ NES core 的运行时桥接
 ├── video/                 RGB565 显示输出封装
+├── docs/
+│   └── module_host_api_v1.md
 ├── examples/
 │   └── nes-gamepad.lua    Holocubic Lua 示例 app
 ├── include/
@@ -46,21 +43,22 @@ cubic Lua 说明在另外项目中可以参考
 - ESP-IDF，并已设置 `IDF_PATH`；
 - `espressif/elf_loader` 组件，`main/idf_component.yml` 会声明该依赖；
 - 与目标固件一致的 `module_abi.h`，仓库内已带一份当前 ABI；
-- 目标固件需要实现动态模块加载、Lua `require()` 动态库加载、SD、文件、显示、任务、堆、时间和串口 host API。
+
 
 `module_abi.h` 查找顺序：
 
-1. 仓库内 `include/module_abi.h`；
+1. CMake 参数 `-DMODULE_ABI_DIR=/path/to/src/dynmod`；
 2. 环境变量 `CUBICLUA_ROOT` 指向的 `$CUBICLUA_ROOT/src/dynmod/module_abi.h`；
-3. 原工程内嵌路径 `../../../../src/dynmod/module_abi.h`；
-4. CMake 参数 `-DMODULE_ABI_DIR=/path/to/src/dynmod`。
+3. 仓库内 `include/module_abi.h`；
+4. 原工程内嵌路径 `../../../../src/dynmod/module_abi.h`。
 
 ## 编译
 
 PowerShell 示例：
 
 ```powershell
-$env:CUBICLUA_ROOT="E:\path\to\cubic-develop"
+Set-Location "E:\cubicsrc\开源APP\nes"
+$env:CUBICLUA_ROOT="E:\cubicsrc\cubic_lua\cubic_arduino\cubic-develop"
 idf.py set-target esp32s3
 idf.py menuconfig
 idf.py build
@@ -69,14 +67,17 @@ idf.py build
 如果不使用 `CUBICLUA_ROOT`，直接传入 ABI 目录：
 
 ```powershell
-idf.py -DMODULE_ABI_DIR="E:\path\to\cubic-develop\src\dynmod" build
+Set-Location "E:\cubicsrc\开源APP\nes"
+idf.py "-DMODULE_ABI_DIR=E:\cubicsrc\cubic_lua\cubic_arduino\cubic-develop\src\dynmod" build
 ```
 
-需要在 menuconfig 中启用 ESP-ELFLoader 的 shared object 动态加载选项：
+需要在 menuconfig 中确认 ESP-ELFLoader 的 shared object 动态加载选项已启用：
 
 ```text
 CONFIG_ELF_DYNAMIC_LOAD_SHARED_OBJECT=y
 ```
+
+仓库的 `sdkconfig.defaults` 已默认启用这个选项；如果本地已有旧 `sdkconfig`，仍需要在 menuconfig 中确认一次。如果这个选项关闭，`project_so(nes)` 不会创建 `so` target，也不会生成 `build/nes.so`。
 
 成功后产物位于：
 
@@ -195,7 +196,7 @@ bit 7  RIGHT
 ```text
 host.sd.begin / open
 host.file.read / seek / position / size_bytes / available / close
-host.display.width / height / acquire / begin_stream / queue_rgb565 / end_stream / draw_rgb565 / release
+host.display.width / height / acquire / start_write / push_image_dma / end_write / release
 host.time.millis / micros / delay
 host.task.create / remove / yield / delay
 host.heap.malloc / calloc / free / free_size / largest_free_block
@@ -204,6 +205,8 @@ host.lua.*
 ```
 
 输入由 Lua app 读取手柄状态后映射成 NES 8-bit mask，再通过 `emu:set_input_mask(mask)` 下发给 core。
+
+其中 `start_write / push_image_dma / end_write` 是 TFT_eSPI 风格的 DMA 分块推屏语义。`module_host_api_v1` 的完整说明见 [docs/module_host_api_v1.md](docs/module_host_api_v1.md)。
 
 ## 当前限制
 
@@ -215,4 +218,4 @@ host.lua.*
 
 ## 致谢
 
-感谢 [Anemoia-ESP32](https://github.com/Shim06/Anemoia-ESP32) 对 ESP32 NES core、mapper 支持和性能优化方向的启发。本项目将相关思路整理为 Holocubic/cubic Lua 固件可动态加载的 `nes.so` 模块形态。
+感谢 [Anemoia-ESP32](https://github.com/Shim06/Anemoia-ESP32) 对 ESP32 NES core、mapper 支持和性能优化方向的启发。本项目将相关思路整理为 Holocubic/cubic Lua 固件可动态加载的 `nes.so` 模块形态。本项目的 NES CPU、PPU、mapper 和渲染链路参考了 Anemoia-ESP32 ，本项目也采用 GPL-3.0 协议，见 [LICENSE](LICENSE)。

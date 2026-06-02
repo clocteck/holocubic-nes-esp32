@@ -37,11 +37,11 @@ bool NesVideoOut::hasTftStreamApi(const module_host_api_v1 *host) const
     {
         return false;
     }
-    const size_t need = offsetof(module_display_api_t, end_stream) + sizeof(host->display.end_stream);
+    const size_t need = offsetof(module_display_api_t, fill_screen) + sizeof(host->display.fill_screen);
     return host->display.size >= need &&
-           host->display.begin_stream &&
-           host->display.queue_rgb565 &&
-           host->display.end_stream;
+           host->display.start_write &&
+           host->display.push_image_dma &&
+           host->display.end_write;
 }
 
 bool NesVideoOut::allocDmaBuffers(const module_host_api_v1 *host, String *err)
@@ -107,7 +107,7 @@ bool NesVideoOut::startWrite(String *err)
         setError(err, "display stream api unavailable");
         return false;
     }
-    if (host->display.begin_stream(m_surface) != MODULE_OK)
+    if (host->display.start_write(m_surface) != MODULE_OK)
     {
         setError(err, "begin display stream failed");
         return false;
@@ -138,11 +138,16 @@ bool NesVideoOut::pushImageDMA(const module_display_chunk_t *chunk,
         }
         else
         {
-            const int32_t ret = host->display.queue_rgb565(m_surface, chunk, x, y, w, h);
+            const int32_t ret = host->display.push_image_dma(m_surface,
+                                                             x,
+                                                             y,
+                                                             w,
+                                                             h,
+                                                             (const uint16_t *)chunk->pixels);
             if (ret != MODULE_OK)
             {
                 (void)dmaWait(nullptr);
-                setError(err, "queue display dma failed");
+                setError(err, "push display dma failed");
                 return false;
             }
             m_stream_queued++;
@@ -150,21 +155,20 @@ bool NesVideoOut::pushImageDMA(const module_display_chunk_t *chunk,
         }
     }
 
-    if (!host->display.draw_rgb565)
+    if (!host->display.push_image_dma)
     {
-        setError(err, "display draw api unavailable");
+        setError(err, "display push api unavailable");
         return false;
     }
-    const int32_t ret = host->display.draw_rgb565(m_surface,
-                                                  x,
-                                                  y,
-                                                  (const uint16_t *)chunk->pixels,
-                                                  w,
-                                                  h,
-                                                  chunk->pitch_bytes);
+    const int32_t ret = host->display.push_image_dma(m_surface,
+                                                     x,
+                                                     y,
+                                                     w,
+                                                     h,
+                                                     (const uint16_t *)chunk->pixels);
     if (ret != MODULE_OK)
     {
-        setError(err, "display draw failed");
+        setError(err, "display push failed");
         return false;
     }
     return true;
@@ -178,7 +182,7 @@ bool NesVideoOut::dmaWait(String *err)
         m_stream_queued = 0;
         return true;
     }
-    if (!host || !host->display.end_stream)
+    if (!host || !host->display.end_write)
     {
         m_stream_active = false;
         m_stream_queued = 0;
@@ -186,7 +190,7 @@ bool NesVideoOut::dmaWait(String *err)
         return false;
     }
 
-    const int32_t ret = host->display.end_stream(m_surface);
+    const int32_t ret = host->display.end_write(m_surface);
     m_stream_active = false;
     m_stream_queued = 0;
     if (ret != MODULE_OK)
