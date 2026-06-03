@@ -7,7 +7,7 @@
 #include "config.h"
 
 #define SAMPLE_RATE 22050
-#define AUDIO_BUFFER_SIZE 64
+#define AUDIO_BUFFER_SIZE 256
 
 class Bus;
 class Cpu6502;
@@ -18,14 +18,17 @@ public:
     ~Apu2A03();
 
 public:
+    using AudioSink = void (*)(void *user, const int16_t *samples, size_t frames);
+
     void connectBus(Bus* n) { bus = n; }
     void connectCPU(Cpu6502* n) { cpu = n; }
+    void setAudioSink(AudioSink sink, void *user);
     void cpuWrite(uint16_t addr, uint8_t data);
     uint8_t cpuRead(uint16_t addr);
 	void setVolume(uint8_t vol);
     void clock();
     void reset();
-    static uint16_t audio_buffer[AUDIO_BUFFER_SIZE * 2];
+    static int16_t audio_buffer[AUDIO_BUFFER_SIZE];
 
     uint8_t DMC_sample_byte = 0;
 	bool IRQ = false;
@@ -38,6 +41,10 @@ private:
     uint32_t clock_counter = 0;
 	uint32_t pulse_hz = 0;
 	uint16_t prev_sample = 0;
+    int32_t hp_prev_input = 0;
+    int32_t hp_prev_output = 0;
+    AudioSink audio_sink = nullptr;
+    void *audio_sink_user = nullptr;
 	bool four_step_sequence_mode = true;
 
     // double pulse_out = 0.0;

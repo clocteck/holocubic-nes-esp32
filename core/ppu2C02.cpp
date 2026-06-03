@@ -137,20 +137,20 @@ IRAM_ATTR uint8_t Ppu2C02::cpuRead(uint16_t addr)
     return data;
 }
 
-IRAM_ATTR void Ppu2C02::setVBlank()
+MOD_IRAM_ATTR void Ppu2C02::setVBlank()
 {
     status.VBlank = 1;
     if (control.Vblank_NMI) bus->NMI();
 }
 
-IRAM_ATTR void Ppu2C02::clearVBlank()
+MOD_IRAM_ATTR void Ppu2C02::clearVBlank()
 {
     status.VBlank = 0;
     status.sprite_zero_hit = 0;
     status.sprite_overflow = 0;
 }
 
-IRAM_ATTR void Ppu2C02::renderScanline(uint16_t current_scanline)
+MOD_IRAM_ATTR void Ppu2C02::renderScanline(uint16_t current_scanline)
 {
     scanline = current_scanline;
     transferScroll();
@@ -278,7 +278,7 @@ inline void Ppu2C02::renderBackground()
     }
 }
 
-inline void Ppu2C02::renderSprites()
+MOD_IRAM_ATTR void Ppu2C02::renderSprites()
 {
     if (!mask.render_sprite) 
     {

@@ -95,6 +95,19 @@ typedef struct nes_session_t {
     uint32_t task_stack_bytes;
     uint32_t task_priority;
     int32_t task_core;
+    uint8_t audio_enabled;
+    uint8_t audio_lua_fallback;
+    uint8_t audio_requested;
+    uint8_t audio_active;
+    uint16_t audio_channels;
+    uint16_t audio_bits_per_sample;
+    uint8_t audio_volume_percent;
+    uint32_t audio_sample_rate;
+    uint32_t audio_queue_bytes;
+    uint32_t audio_queued_bytes;
+    uint32_t audio_dropped_bytes;
+    char audio_backend[12];
+    char audio_error[64];
 } nes_session_t;
 
 struct nes_module_instance_t {
@@ -334,6 +347,19 @@ static void session_set_defaults(nes_session_t *session)
     session->task_stack_bytes = NES_DEFAULT_TASK_STACK;
     session->task_priority = NES_DEFAULT_TASK_PRIORITY;
     session->task_core = NES_DEFAULT_TASK_CORE;
+    session->audio_enabled = 1;
+    session->audio_lua_fallback = 1;
+    session->audio_requested = 0;
+    session->audio_active = 0;
+    session->audio_channels = 1;
+    session->audio_bits_per_sample = 16;
+    session->audio_volume_percent = 80;
+    session->audio_sample_rate = 22050;
+    session->audio_queue_bytes = 32768;
+    session->audio_queued_bytes = 0;
+    session->audio_dropped_bytes = 0;
+    session->audio_backend[0] = '\0';
+    session->audio_error[0] = '\0';
     session->rom_path[0] = '\0';
     session->last_error[0] = '\0';
     memset(&session->rom, 0, sizeof(session->rom));
@@ -555,6 +581,9 @@ static void apply_u32_option(int64_t value, uint32_t min_value, uint32_t max_val
     }
 }
 
+/**
+ * @brief Read a numeric option from a Lua table.
+ */
 static uint16_t clamp_transfer_rows_option(int64_t value)
 {
     if (value <= 0) {
@@ -595,6 +624,9 @@ static void apply_options(lua_State *L, const module_host_api_v1 *host, nes_sess
     if (read_table_integer(L, host, table_index, "task_core", &n)) {
         session->task_core = (n < 0) ? -1 : ((n > 1) ? 1 : (int32_t)n);
     }
+    if (read_table_boolean(L, host, table_index, "audio", &autorun)) {
+        session->audio_enabled = autorun ? 1 : 0;
+    }
 
     (void)read_table_boolean(L, host, table_index, "center", &keep_center);
     if (read_table_boolean(L, host, table_index, "autorun", &autorun) ||
@@ -615,6 +647,41 @@ static void apply_options(lua_State *L, const module_host_api_v1 *host, nes_sess
         }
         if (read_table_integer(L, host, video_index, "transfer_rows", &n)) {
             session->transfer_rows = clamp_transfer_rows_option(n);
+        }
+    }
+    host->lua.settop(L, top);
+
+    top = host->lua.gettop(L);
+    host->lua.getfield(L, table_index, "audio");
+    if (host->lua.istable(L, -1)) {
+        int audio_index = host->lua.gettop(L);
+        int enabled = session->audio_enabled;
+        int fallback = session->audio_lua_fallback;
+        if (read_table_boolean(L, host, audio_index, "enabled", &enabled) ||
+            read_table_boolean(L, host, audio_index, "enable", &enabled)) {
+            session->audio_enabled = enabled ? 1 : 0;
+        }
+        if (read_table_boolean(L, host, audio_index, "lua_fallback", &fallback) ||
+            read_table_boolean(L, host, audio_index, "fallback", &fallback)) {
+            session->audio_lua_fallback = fallback ? 1 : 0;
+        }
+        if (read_table_integer(L, host, audio_index, "rate", &n) ||
+            read_table_integer(L, host, audio_index, "sample_rate", &n)) {
+            apply_u32_option(n, 1000, 96000, &session->audio_sample_rate);
+        }
+        if (read_table_integer(L, host, audio_index, "bits", &n) ||
+            read_table_integer(L, host, audio_index, "bits_per_sample", &n)) {
+            session->audio_bits_per_sample = (n <= 8) ? 8 : 16;
+        }
+        if (read_table_integer(L, host, audio_index, "channels", &n)) {
+            session->audio_channels = (n <= 1) ? 1 : 2;
+        }
+        if (read_table_integer(L, host, audio_index, "volume", &n) ||
+            read_table_integer(L, host, audio_index, "volume_percent", &n)) {
+            session->audio_volume_percent = (n < 0) ? 0 : ((n > 100) ? 100 : (uint8_t)n);
+        }
+        if (read_table_integer(L, host, audio_index, "queue_bytes", &n)) {
+            apply_u32_option(n, 4096, 131072, &session->audio_queue_bytes);
         }
     }
     host->lua.settop(L, top);
@@ -721,6 +788,12 @@ static void session_sync_runtime(nes_session_t *session)
     session->display_async_slots = status.display_async_slots;
     session->task_stack_psram = status.task_stack_psram;
     session->autorun_active = status.autorun;
+    session->audio_requested = status.audio_requested;
+    session->audio_active = status.audio_active;
+    session->audio_queued_bytes = status.audio_queued_bytes;
+    session->audio_dropped_bytes = status.audio_dropped_bytes;
+    copy_text(session->audio_backend, sizeof(session->audio_backend), status.audio_backend);
+    copy_text(session->audio_error, sizeof(session->audio_error), status.audio_error);
     if (status.last_error[0]) {
         copy_text(session->last_error, sizeof(session->last_error), status.last_error);
     }
@@ -783,6 +856,13 @@ static int session_start(nes_session_t *session)
     options.task_priority = session->task_priority;
     options.task_core = session->task_core;
     options.autorun = session->autorun ? 1 : 0;
+    options.audio_enabled = session->audio_enabled ? 1 : 0;
+    options.audio_lua_fallback = session->audio_lua_fallback ? 1 : 0;
+    options.audio_channels = session->audio_channels;
+    options.audio_bits_per_sample = session->audio_bits_per_sample;
+    options.audio_volume_percent = session->audio_volume_percent;
+    options.audio_sample_rate = session->audio_sample_rate;
+    options.audio_queue_bytes = session->audio_queue_bytes;
     err[0] = '\0';
 
     if (!nes_core_start(session->core_runtime, session->rom_path, &options, err, sizeof(err))) {
@@ -867,7 +947,7 @@ static const char *state_name(nes_state_t state)
  */
 static void push_session_info(lua_State *L, const module_host_api_v1 *host, nes_session_t *session)
 {
-    host->lua.createtable(L, 0, 37);
+    host->lua.createtable(L, 0, 46);
     if (!session) {
         set_string_field(L, host, "state", "missing");
         return;
@@ -907,6 +987,19 @@ static void push_session_info(lua_State *L, const module_host_api_v1 *host, nes_
     set_boolean_field(L, host, "task_stack_psram", session->task_stack_psram);
     set_integer_field(L, host, "task_priority", session->task_priority);
     set_integer_field(L, host, "task_core", session->task_core);
+    set_boolean_field(L, host, "audio_enabled", session->audio_enabled);
+    set_boolean_field(L, host, "audio_requested", session->audio_requested);
+    set_boolean_field(L, host, "audio_active", session->audio_active);
+    set_string_field(L, host, "audio_backend", session->audio_backend);
+    set_string_field(L, host, "audio_error", session->audio_error);
+    set_boolean_field(L, host, "audio_lua_fallback", session->audio_lua_fallback);
+    set_integer_field(L, host, "audio_rate", session->audio_sample_rate);
+    set_integer_field(L, host, "audio_channels", session->audio_channels);
+    set_integer_field(L, host, "audio_bits", session->audio_bits_per_sample);
+    set_integer_field(L, host, "audio_volume", session->audio_volume_percent);
+    set_integer_field(L, host, "audio_queue_bytes", session->audio_queue_bytes);
+    set_integer_field(L, host, "audio_queued_bytes", session->audio_queued_bytes);
+    set_integer_field(L, host, "audio_dropped_bytes", session->audio_dropped_bytes);
     set_integer_field(L, host, "gamepad_mask", session->last_gamepad_mask);
     set_integer_field(L, host, "pad_mask", session->last_nes_mask);
     set_integer_field(L, host, "heap_psram_free",
@@ -1222,6 +1315,64 @@ static int l_emu_input(lua_State *L)
 }
 
 /**
+ * @brief Lua API: emu:read_audio([max_bytes]) -> pcm_string.
+ */
+static int l_emu_read_audio(lua_State *L)
+{
+    nes_session_t *session = session_from_lua(L);
+    const module_host_api_v1 *host = session_host(session);
+    int argc = host ? host->lua.gettop(L) : 0;
+    int arg = 1;
+    int64_t requested = 4096;
+    size_t max_bytes = 4096;
+    uint8_t *buf = NULL;
+    size_t got = 0;
+
+    if (!session || !host) {
+        return push_error(L, host, "nes.read_audio: session missing");
+    }
+    if (host->lua.size < offsetof(module_lua_api_t, pushlstring) + sizeof(host->lua.pushlstring) ||
+        !host->lua.pushlstring) {
+        return push_error(L, host, "nes.read_audio: host lua binary string api missing");
+    }
+    if (argc >= 1 && host->lua.istable(L, 1)) {
+        arg = 2;
+    }
+    if (argc >= arg && host->lua.isnumber(L, arg)) {
+        requested = host->lua.tointeger(L, arg);
+    }
+    if (requested < 256) {
+        requested = 256;
+    } else if (requested > 8192) {
+        requested = 8192;
+    }
+    {
+        const size_t sample_bytes = (session->audio_bits_per_sample <= 8) ? 1u : 2u;
+        const size_t frame_bytes = sample_bytes * ((session->audio_channels == 0) ? 1u : (size_t)session->audio_channels);
+        max_bytes = ((size_t)requested / frame_bytes) * frame_bytes;
+    }
+
+    if (!session->core_runtime || max_bytes == 0 || !host->heap.malloc) {
+        host->lua.pushlstring(L, "", 0);
+        return 1;
+    }
+
+    buf = (uint8_t *)host->heap.malloc(max_bytes, MODULE_HEAP_INTERNAL | MODULE_HEAP_8BIT);
+    if (!buf) {
+        buf = (uint8_t *)host->heap.malloc(max_bytes, MODULE_HEAP_DEFAULT);
+    }
+    if (!buf) {
+        return push_error(L, host, "nes.read_audio: alloc buffer failed");
+    }
+
+    got = nes_core_read_audio(session->core_runtime, buf, max_bytes);
+    host->lua.pushlstring(L, (const char *)buf, got);
+    host->heap.free(buf);
+    session_sync_runtime(session);
+    return 1;
+}
+
+/**
  * @brief Lua API: emu:set_input_mask(mask) -> true.
  */
 static int l_emu_set_input_mask(lua_State *L)
@@ -1292,6 +1443,7 @@ static void push_emu_object(lua_State *L, const module_host_api_v1 *host, nes_se
     set_closure_field(L, host, "reset", l_emu_reset, session);
     set_closure_field(L, host, "info", l_emu_info, session);
     set_closure_field(L, host, "input", l_emu_input, session);
+    set_closure_field(L, host, "read_audio", l_emu_read_audio, session);
     set_closure_field(L, host, "set_input_mask", l_emu_set_input_mask, session);
     set_closure_field(L, host, "clear_input", l_emu_clear_input, session);
 }
@@ -1400,7 +1552,7 @@ NES_MODULE_EXPORT int32_t module_luaopen_v1(void *instance, lua_State *L)
 
     host->lua.createtable(L, 0, 24);
     set_string_field(L, host, "VERSION", NES_VERSION);
-    set_boolean_field(L, host, "AUDIO", 0);
+    set_boolean_field(L, host, "AUDIO", 1);
     set_boolean_field(L, host, "EMULATOR_CORE", 1);
     set_integer_field(L, host, "WIDTH", NES_FRAME_WIDTH);
     set_integer_field(L, host, "HEIGHT", NES_FRAME_HEIGHT);

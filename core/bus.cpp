@@ -22,7 +22,7 @@ Bus::~Bus()
 {
 }
 
-IRAM_ATTR void Bus::cpuWrite(uint16_t addr, uint8_t data)
+MOD_IRAM_ATTR void Bus::cpuWrite(uint16_t addr, uint8_t data)
 {
     if (cart && cart->cpuWrite(addr, data)) {}
     else if ((addr & 0xE000) == 0x0000)
@@ -57,7 +57,7 @@ IRAM_ATTR void Bus::cpuWrite(uint16_t addr, uint8_t data)
     m_cpu_open_bus = data;
 }
 
-IRAM_ATTR uint8_t Bus::cpuRead(uint16_t addr)
+MOD_IRAM_ATTR uint8_t Bus::cpuRead(uint16_t addr)
 {
     uint8_t data = m_cpu_open_bus;
     bool handled = false;
@@ -172,7 +172,7 @@ bool Bus::reset(uint32_t max_stage)
     return ok;
 }
 
-IRAM_ATTR void Bus::clock()
+MOD_IRAM_ATTR void Bus::clock()
 {
     // 1 frame == 341 dots * 261 scanlines
     // Visible scanlines 0-239
@@ -237,7 +237,7 @@ Cartridge::MIRROR Bus::getPPUMirrorMode()
     return ppu.getMirror();
 }
 
-IRAM_ATTR void Bus::OAM_Write(uint8_t addr, uint8_t data)
+MOD_IRAM_ATTR void Bus::OAM_Write(uint8_t addr, uint8_t data)
 {
     ppu.ptr_sprite[addr] = data;
 }
@@ -339,12 +339,12 @@ bool Bus::consumeRenderFailure(String *err)
     return true;
 }
 
-IRAM_ATTR void Bus::IRQ()
+MOD_IRAM_ATTR void Bus::IRQ()
 {
     cpu.IRQ();
 }
 
-IRAM_ATTR void Bus::NMI()
+MOD_IRAM_ATTR void Bus::NMI()
 {
     cpu.NMI();
 }

@@ -10,6 +10,10 @@
 #define IRAM_ATTR
 #endif
 
+#ifndef MOD_IRAM_ATTR
+#define MOD_IRAM_ATTR __attribute__((section(".mod_iram"), noinline, used))
+#endif
+
 #ifndef DRAM_ATTR
 #define DRAM_ATTR
 #endif

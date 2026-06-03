@@ -135,7 +135,7 @@ Cartridge::~Cartridge()
 }
 
 
-IRAM_ATTR bool Cartridge::cpuRead(uint16_t addr, uint8_t& data)
+MOD_IRAM_ATTR bool Cartridge::cpuRead(uint16_t addr, uint8_t& data)
 {
     if (!mapper.vtable)
     {
@@ -144,7 +144,7 @@ IRAM_ATTR bool Cartridge::cpuRead(uint16_t addr, uint8_t& data)
 	return mapper.vtable->cpuRead(&mapper, addr, data);
 }
 
-IRAM_ATTR bool Cartridge::cpuWrite(uint16_t addr, uint8_t data)
+MOD_IRAM_ATTR bool Cartridge::cpuWrite(uint16_t addr, uint8_t data)
 {
     if (!mapper.vtable)
     {
@@ -171,7 +171,7 @@ IRAM_ATTR bool Cartridge::ppuWrite(uint16_t addr, uint8_t data)
 	return mapper.vtable->ppuWrite(&mapper, addr, data);	
 }
 
-IRAM_ATTR void Cartridge::notifyPpuAddress(uint16_t addr)
+MOD_IRAM_ATTR void Cartridge::notifyPpuAddress(uint16_t addr)
 {
     if (!m_has_ppu_address_callback || !mapper.vtable || !mapper.vtable->ppuAddress)
     {
@@ -181,7 +181,7 @@ IRAM_ATTR void Cartridge::notifyPpuAddress(uint16_t addr)
     mapper.vtable->ppuAddress(&mapper, addr);
 }
 
-IRAM_ATTR uint8_t* Cartridge::ppuReadPtr(uint16_t addr)
+MOD_IRAM_ATTR uint8_t* Cartridge::ppuReadPtr(uint16_t addr)
 {
     if (!mapper.vtable)
     {

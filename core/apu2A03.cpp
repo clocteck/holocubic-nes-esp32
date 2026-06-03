@@ -2,7 +2,7 @@
 #include "bus.h"
 #include "cpu6502.h"
 
-DMA_ATTR uint16_t Apu2A03::audio_buffer[AUDIO_BUFFER_SIZE * 2];
+DMA_ATTR int16_t Apu2A03::audio_buffer[AUDIO_BUFFER_SIZE];
 constexpr uint8_t Apu2A03::duty_sequences[4][8];
 constexpr uint8_t Apu2A03::length_counter_lookup[32];
 constexpr uint8_t Apu2A03::triangle_sequence[32];
@@ -17,6 +17,12 @@ Apu2A03::Apu2A03()
 Apu2A03::~Apu2A03()
 {
 
+}
+
+void Apu2A03::setAudioSink(AudioSink sink, void *user)
+{
+    audio_sink = sink;
+    audio_sink_user = user;
 }
 
 void Apu2A03::reset()
@@ -43,10 +49,16 @@ void Apu2A03::reset()
 	DMC.sample_buffer = 0;
 	DMC.sample_length = 0;
 	DMC.output_unit.silence_flag = true;
+    buffer_index = 0;
+    prev_sample = 0;
+    hp_prev_input = 0;
+    hp_prev_output = 0;
+    pulse_hz = 0;
+    memset(audio_buffer, 0, sizeof(audio_buffer));
 }
 
 
-IRAM_ATTR void Apu2A03::cpuWrite(uint16_t addr, uint8_t data)
+MOD_IRAM_ATTR void Apu2A03::cpuWrite(uint16_t addr, uint8_t data)
 {
     switch (addr)
 	{
@@ -264,7 +276,7 @@ void Apu2A03::setVolume(uint8_t vol)
 	volume = vol;
 }
 
-IRAM_ATTR void Apu2A03::clock()
+MOD_IRAM_ATTR void Apu2A03::clock()
 {
     // Clock all sound channels
     pulseChannelClock(pulse1.seq, pulse1_enable);
@@ -347,9 +359,8 @@ IRAM_ATTR void Apu2A03::clock()
         break;
     }
 
-	// Put sound channels output into audio buffers
-	// Generate sample every 20.29221088 clocks
-	// (1.789773 MHz / 2) / 44100 Hz
+	// Put sound channels output into audio buffers.
+	// Anemoia clocks the APU independently and lets I2S backpressure pace it.
 	pulse_hz += SAMPLE_RATE;
 	if (pulse_hz > 894886)
 	{
@@ -379,7 +390,7 @@ IRAM_ATTR void Apu2A03::clock()
 
 inline void Apu2A03::generateSample()
 {
-	uint16_t index = (buffer_index << 1); 
+	uint16_t index = buffer_index; 
 
 	uint16_t sample = 0;
 	sample += pulse1.seq.output ? pulse1.env.output : 0;
@@ -398,14 +409,28 @@ inline void Apu2A03::generateSample()
 	sample &= 0xFF;
 	prev_sample = sample;
 	
-	sample <<= 8;
-    audio_buffer[index] = sample;	
-    audio_buffer[index + 1] = sample;	
+	const int32_t raw = ((int32_t)sample) << 8;
+    int32_t filtered = raw - hp_prev_input + ((hp_prev_output * 255) >> 8);
+    hp_prev_input = raw;
+    hp_prev_output = filtered;
+    if (filtered > 32767)
+    {
+        filtered = 32767;
+    }
+    else if (filtered < -32768)
+    {
+        filtered = -32768;
+    }
+    audio_buffer[index] = (int16_t)filtered;
 
 	// Reset audio buffer index once filled
 	buffer_index++;
 	if (buffer_index >= AUDIO_BUFFER_SIZE) 
     { 
+        if (audio_sink)
+        {
+            audio_sink(audio_sink_user, audio_buffer, AUDIO_BUFFER_SIZE);
+        }
         buffer_index = 0; 
     }
 }

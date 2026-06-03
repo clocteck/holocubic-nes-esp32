@@ -371,15 +371,17 @@ IRAM_ATTR void Cpu6502::clock(int i)
 
         if (remaining_cycles >= cycles)
         {
-            remaining_cycles -= (cycles - 1);
-            cart->cpuCycle(cycles);
-            cycles = 0;
+            const uint16_t consumed = cycles;
+            remaining_cycles -= (consumed - 1);
+            cart->cpuCycle(consumed);
+            cycles = (cycles > consumed) ? (cycles - consumed) : 0;
             continue;
         }
         else
         {
-            cycles -= remaining_cycles;
-            cart->cpuCycle(remaining_cycles);
+            const uint16_t consumed = (uint16_t)remaining_cycles;
+            cart->cpuCycle(consumed);
+            cycles = (cycles > consumed) ? (cycles - consumed) : 0;
             return;
         }
     }

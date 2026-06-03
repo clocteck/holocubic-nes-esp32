@@ -11,7 +11,7 @@ typedef struct lua_State lua_State;
 
 typedef int (*module_lua_cfunction_t)(lua_State *L);
 
-#define MODULE_ABI_VERSION 0x00020001u
+#define MODULE_ABI_VERSION 0x00020002u
 #define MODULE_MANIFEST_MAGIC 0x414D4F44u /* "AMOD" */
 #define MODULE_NAME_MAX 32u
 #define MODULE_PATH_MAX 160u
@@ -61,6 +61,30 @@ typedef enum module_seek_mode_t {
 typedef enum module_pixel_format_t {
     MODULE_PIXEL_RGB565 = 1,
 } module_pixel_format_t;
+
+typedef enum module_i2s_mode_t {
+    MODULE_I2S_MODE_TX = 1u << 0,
+    MODULE_I2S_MODE_RX = 1u << 1,
+    MODULE_I2S_MODE_TX_RX = MODULE_I2S_MODE_TX | MODULE_I2S_MODE_RX,
+} module_i2s_mode_t;
+
+typedef enum module_i2s_format_t {
+    MODULE_I2S_FORMAT_I2S = 1,
+    MODULE_I2S_FORMAT_LEFT = 2,
+    MODULE_I2S_FORMAT_PCM_SHORT = 3,
+    MODULE_I2S_FORMAT_PCM_LONG = 4,
+} module_i2s_format_t;
+
+typedef enum module_i2s_channel_mode_t {
+    MODULE_I2S_CHANNEL_STEREO = 1,
+    MODULE_I2S_CHANNEL_MONO_LEFT = 2,
+    MODULE_I2S_CHANNEL_MONO_RIGHT = 3,
+} module_i2s_channel_mode_t;
+
+typedef enum module_i2s_flags_t {
+    MODULE_I2S_FLAG_USE_APLL = 1u << 0,
+    MODULE_I2S_FLAG_AUTO_CLEAR_TX = 1u << 1,
+} module_i2s_flags_t;
 
 typedef enum module_gamepad_button_t {
     MODULE_GAMEPAD_A = 1u << 0,
@@ -157,6 +181,27 @@ typedef struct module_audio_desc_t {
     uint32_t flags;
 } module_audio_desc_t;
 
+typedef struct module_i2s_config_t {
+    uint32_t size;
+    uint8_t port;
+    uint8_t mode;
+    uint16_t reserved0;
+    uint32_t sample_rate;
+    uint16_t bits;
+    uint16_t channels;
+    uint32_t format;
+    uint32_t channel_mode;
+    int16_t bclk_pin;
+    int16_t ws_pin;
+    int16_t dout_pin;
+    int16_t din_pin;
+    int16_t mclk_pin;
+    int16_t reserved1;
+    uint16_t dma_buf_count;
+    uint16_t dma_buf_len;
+    uint32_t flags;
+} module_i2s_config_t;
+
 typedef struct module_serial_api_t {
     uint32_t size;
     int32_t (*write)(const void *data, size_t len);
@@ -213,6 +258,19 @@ typedef struct module_audio_api_t {
     int32_t (*available)(void *stream, size_t *out_bytes);
     int32_t (*end)(void *stream);
 } module_audio_api_t;
+
+typedef struct module_i2s_api_t {
+    uint32_t size;
+    int32_t (*begin)(const module_i2s_config_t *cfg, void **out_stream);
+    int32_t (*write)(void *stream, const void *data, size_t bytes,
+                     size_t *out_written, uint32_t timeout_ms);
+    int32_t (*read)(void *stream, void *data, size_t bytes,
+                    size_t *out_read, uint32_t timeout_ms);
+    int32_t (*availableForWrite)(void *stream, size_t *out_bytes);
+    int32_t (*flush)(void *stream);
+    int32_t (*mute)(void *stream);
+    int32_t (*end)(void *stream);
+} module_i2s_api_t;
 
 typedef struct module_gamepad_api_t {
     uint32_t size;
@@ -285,6 +343,9 @@ typedef struct module_lua_api_t {
     void (*registry_rawgeti)(lua_State *L, int ref);
     int (*upvalue_index)(int n);
     int (*error)(lua_State *L, const char *msg);
+    const char *(*tolstring)(lua_State *L, int idx, size_t *out_len);
+    const char *(*checklstring)(lua_State *L, int idx, size_t *out_len);
+    void (*pushlstring)(lua_State *L, const char *data, size_t len);
 } module_lua_api_t;
 
 typedef struct module_host_api_v1 {
@@ -300,6 +361,7 @@ typedef struct module_host_api_v1 {
     module_heap_api_t heap;
     module_task_api_t task;
     module_lua_api_t lua;
+    module_i2s_api_t i2s;
 } module_host_api_v1;
 
 typedef const module_manifest_t *(*module_query_v1_fn)(void);

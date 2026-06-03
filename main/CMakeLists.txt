@@ -34,6 +34,7 @@ set(NES_CORE_SRCS
     "../core/mappers/mapper015.cpp"
     "../core/mappers/mapper069.cpp"
     "../core/mappers/mapper226.cpp"
+    "../audio/nes_audio_out.cpp"
     "../port/nes_port.cpp"
     "../runtime/nes_core_bridge.cpp"
     "../video/nes_video_out.cpp"
@@ -42,6 +43,7 @@ set(NES_CORE_SRCS
 idf_component_register(
     SRCS
         "nes_module.c"
+        "nes_shims.c"
         ${NES_CORE_SRCS}
     INCLUDE_DIRS
         "."

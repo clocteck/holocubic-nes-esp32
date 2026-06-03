@@ -115,7 +115,7 @@ void bankInit(BankCache* cache,
     }
 }
 
-IRAM_ATTR uint8_t* getBank(BankCache* cache, uint8_t bank_id, Mapper::ROM_TYPE rom)
+MOD_IRAM_ATTR uint8_t* getBank(BankCache* cache, uint8_t bank_id, Mapper::ROM_TYPE rom)
 {
     cache->tick++;
 
