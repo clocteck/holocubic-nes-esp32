@@ -114,7 +114,20 @@ release
 
 ### audio
 
-音频流接口。当前 NES 模块保留 ABI，但尚未接入音频输出。
+音频流接口：
+
+```text
+begin
+write
+available
+end
+```
+
+NES 模块的 APU 采样优先经这里输出：`begin` 传入 `module_audio_desc_t`（`sample_rate` / `bits_per_sample` / `channels`），之后每批采样调 `write`，停止时 `end`。模块只用 `begin / write / end`，不使用 `available`；三者缺任一即视为宿主不支持音频。
+
+实际送出的数据**恒为 22050Hz、16 位、单声道**（APU 侧 `SAMPLE_RATE` / `int16_t[256]` 写死，链路无重采样）。`desc` 里的字段来自 Lua 侧 `audio.rate/bits/channels` 选项，宿主收到非默认值时数据格式并不会跟着变，因此宿主实现可以只支持这一种格式。
+
+宿主缺 `begin/write/end` 中任一个、或 `begin` 返回非 `MODULE_OK` 时，模块不会走 host 后端：若 Lua 侧 `audio.lua_fallback` 为真（默认），改用内部环形队列，`emu:info().audio_backend` 为 `"lua"`，由 Lua app 调用 `emu:read_audio()` 取走 PCM；否则为 `"none"`（无声，原因见 `audio_error`）。后端在 `NesAudioOut::begin()` 里一次选定，不存在运行中从 `"host"` 降级到 `"lua"` 的过程。
 
 ### gamepad
 

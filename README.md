@@ -9,6 +9,7 @@
 - 以 `module_host_api_v1` 作为唯一宿主 ABI。
 - 通过 ESP-ELFLoader 构建和加载 `.so`。
 - 示例 Lua app 支持从 `/sd/nes` 扫描 ROM，并使用 Xbox BLE 手柄映射 NES 输入。
+- 内置 2A03 APU 模拟（脉冲 ×2 / 三角 / 噪声 / DMC），音频优先经宿主 `host.audio` 输出，不可用时回退 Lua 拉取模式。
 - 在设备上可以跑到50帧左右
 - 当前支持 mapper：`0, 1, 2, 3, 4, 7, 15, 69, 226`。
 
@@ -174,6 +175,7 @@ emu:info()
 emu:input()
 emu:set_input_mask(mask)
 emu:clear_input()
+emu:read_audio([max_bytes])
 ```
 
 NES 手柄 bit mask：
@@ -189,6 +191,39 @@ bit 6  LEFT
 bit 7  RIGHT
 ```
 
+## 音频
+
+`nes.AUDIO == true` 表示模块已内置 APU 模拟。音频默认开启（22050Hz / 16bit / 单声道 / 音量 80%），后端按顺序探测：
+
+1. 宿主 `host.audio.begin / write / end` 都存在且 `begin` 返回 `MODULE_OK` → `emu:info().audio_backend == "host"`，模块直接推流；
+2. 否则、且 `audio.lua_fallback` 没被关掉（默认开）→ `audio_backend == "lua"`，走模块内环形队列，需要 Lua app 周期调用 `emu:read_audio()` 取走 PCM，否则队列写满会丢数据；
+3. 两条都不成立 → `audio_backend == "none"`，无声，原因记在 `emu:info().audio_error`（模拟照常跑）。
+
+后端只在 `begin()` 时定一次，运行中不会从 `"host"` 切到 `"lua"`。
+
+音频选项只能在 `nes.create` 里给（`emu:start()` 不接受任何选项），都可省略，`audio = false` 是整体关闭的简写：
+
+```lua
+local emu = nes.create({
+  rom = "/sd/nes/demo.nes",
+  audio = {
+    enabled = true,        -- false 只跑画面
+    lua_fallback = true,   -- 允许回退到 emu:read_audio() 拉取模式
+    volume = 80,           -- 1..100
+    queue_bytes = 32768,   -- 4096..131072，仅 lua 后端有意义
+  },
+})
+```
+
+关于格式与音量的两个坑（都是当前实现的限制，不要照着 clamp 范围随便填）：
+
+- `audio.rate` / `audio.bits` / `audio.channels` 虽然能传且会被 clamp（1000..96000 / 8 或 16 / 1 或 2），但**只有默认的 22050Hz、16bit、单声道是真正可用的**：APU 固定按 `core/apu2A03.h` 的 `SAMPLE_RATE = 22050` 生成 `int16_t[AUDIO_BUFFER_SIZE=256]` 单声道采样，链路上没有重采样和格式转换。改 `rate` 只会让宿主按错采样率播放（音调不对），`bits = 8` 会让宿主把 16 位数据当 8 位解释，`channels = 2` 更会让 `NesAudioOut::write()` 按两倍长度去读单声道缓冲区（越界读）。
+- `volume = 0` **不能静音**：`apply_options()` 允许 0，但 `NesCoreRuntime::start()` 把 0 视为"未设置"又改回 80。要静音请用 `audio = false` 或 `audio.enabled = false`。
+
+`emu:read_audio([max_bytes])` 返回 PCM 二进制字符串；`max_bytes` 默认 4096、clamp 到 256..8192 并按帧长对齐，没有数据时返回空串。
+
+`emu:info()` 里可用于排查音频的字段：`audio_enabled`、`audio_requested`、`audio_active`、`audio_backend`、`audio_error`、`audio_lua_fallback`、`audio_rate`、`audio_channels`、`audio_bits`、`audio_volume`、`audio_queue_bytes`、`audio_queued_bytes`、`audio_dropped_bytes`。音频出错不会中断模拟，运行时只记录 `audio_error` 并关掉音频继续出画面。
+
 ## Host API 使用范围
 
 `nes.so` 当前使用这些 host API：
@@ -197,6 +232,7 @@ bit 7  RIGHT
 host.sd.begin / open
 host.file.read / seek / position / size_bytes / available / close
 host.display.width / height / acquire / start_write / push_image_dma / end_write / release
+host.audio.begin / write / end        # 可选，缺失时音频回退 Lua 拉取模式
 host.time.millis / micros / delay
 host.task.create / remove / yield / delay
 host.heap.malloc / calloc / free / free_size / largest_free_block
@@ -210,7 +246,9 @@ host.lua.*
 
 ## 当前限制
 
-- 音频暂未接入，`nes.AUDIO == false`。
+- 音频已接入（`nes.AUDIO == true`），但回退到 `"lua"` 后端时必须由 Lua app 主动调用 `emu:read_audio()`，否则听不到声音且 `audio_dropped_bytes` 持续增长；自带的 `examples/nes-gamepad.lua` 目前**没有**消费这个队列，所以宿主没有 `host.audio` 时示例是无声的。
+- 音频格式固定 22050Hz / 16bit / 单声道，`audio.rate/bits/channels` 传非默认值不会生效（`channels = 2` 还会越界读，见「音频」一节）；`volume = 0` 也无法静音。
+- 帧率还没到 60fps（设备实测 50 帧左右），默认开启隔帧渲染（`nes_config.h` 的 `FRAMESKIP`）。
 - NES 2.0 ROM 暂不支持。
 - `module_abi.h` 必须和宿主固件完全匹配，否则可能加载失败或运行异常。
 
