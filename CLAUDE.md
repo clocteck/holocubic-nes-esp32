@@ -88,9 +88,10 @@ video/ audio/  RGB565 DMA 分块推屏 / APU 采样输出
 - `core/apu2A03.*` 是完整 2A03（2×pulse + triangle + noise + DMC，含 envelope/sweep/length/linear counter 与高通滤波），采样经 `setAudioSink()` 回调交给 `audio/nes_audio_out.*`。
 - APU 在**独立任务** `nes_apu` 上跑（`startApuTask()`：4096 栈，跑在与 core 相反的核，优先级 core-1，每轮 busy 调 256 次 `apu.clock()`）。它与 core 任务共享 `Bus`，改 APU/CPU 交互时要考虑这层并发。
 - 后端在 `NesAudioOut::begin()` 里一次选定（之后不会降级）：宿主 `host->audio.begin/write/end` 齐全且 `begin` 成功 → `"host"`；否则若 `lua_fallback`（默认开）→ `"lua"`（模块内环形队列，Lua 侧 `emu:read_audio(bytes)` 取 PCM）；都不成立 → `"none"` + `audio_error`。默认 22050Hz / 16bit / mono / 音量 80%。
-- 音频失败不杀模拟：`taskLoop` 每帧 `consumeFailure()`，出错就记 `audio_error` 并 `m_audio.end()` 继续跑画面。
-- **格式实际写死**：APU 只产 22050Hz（`SAMPLE_RATE`）/ `int16_t[AUDIO_BUFFER_SIZE=256]` 单声道，链路无重采样、无格式转换。所以 `audio.rate/bits/channels` 这几个选项是「能传但不生效」：`rate` 只改传给宿主的 `desc`（音调错）、`bits=8` 让宿主错解 16 位数据、**`channels=2` 会让 `NesAudioOut::write()` 按 `frames * channels * 2` 读单声道 256 采样缓冲 → 越界读**。要真支持多格式得先在 `audio/nes_audio_out.*` 加转换。
-- **`volume = 0` 静音不了**：`apply_options()` 收 0，但 `nes_core_bridge.cpp:131` 把 0 当「未设置」改回 80。静音要走 `audio.enabled = false`。
+- 音频失败不杀模拟：`taskLoop` 每帧 `consumeFailure()`，出错就记 `audio_error`，**先 `stopApuTask()` + 摘 sink 再 `m_audio.end()`**（否则 APU 任务可能正卡在 `write()` 里，而这边把 host stream 关了/把队列 free 了）。
+- Lua 队列是 SPSC 但 tail 有两个写者（消费者 `read()` 推进；队列满时生产者也推进 tail 丢旧数据），两侧都必须用 **CAS** 提交 tail，普通 store 会把对方的更新覆盖掉。`read()` 还有读者计数 + `m_closing`，`freeQueue()` 先关门再等在途读者退出（上限 ~200ms）才 free——`read()` 在 Lua 任务、`freeQueue()` 在 core 任务，否则是 UAF。
+- **格式实际写死**：APU 只产 22050Hz（`SAMPLE_RATE`）/ `int16_t[AUDIO_BUFFER_SIZE=256]` 单声道，链路无重采样、无格式转换。`audio.rate/bits/channels` 为兼容仍接受但**被显式忽略**（`apply_options()` 丢弃，`NesAudioOut::begin()` 再把 spec 收敛回真实格式，`write()` 按 `frames * sizeof(int16_t)` 算长度）。2026-07-29 前 `channels=2` 会让 `write()` 按 `frames * channels * 2` 读单声道 256 采样缓冲 → 越界读 512 字节，已修。要真支持多格式得先在 `audio/nes_audio_out.*` 加转换。
+- **`volume = 0` 就是静音**（2026-07-29 修：原来 `nes_core_bridge.cpp` 把 0 当「未设置」改回 80）。默认值只在 `nes_module.c::session_set_defaults()` 里设，runtime 不再覆盖显式的 0。彻底关音频（省掉 APU 任务和队列）用 `audio.enabled = false`。
 
 ## 配置项在哪
 

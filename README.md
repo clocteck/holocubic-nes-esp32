@@ -217,8 +217,8 @@ local emu = nes.create({
 
 关于格式与音量的两个坑（都是当前实现的限制，不要照着 clamp 范围随便填）：
 
-- `audio.rate` / `audio.bits` / `audio.channels` 虽然能传且会被 clamp（1000..96000 / 8 或 16 / 1 或 2），但**只有默认的 22050Hz、16bit、单声道是真正可用的**：APU 固定按 `core/apu2A03.h` 的 `SAMPLE_RATE = 22050` 生成 `int16_t[AUDIO_BUFFER_SIZE=256]` 单声道采样，链路上没有重采样和格式转换。改 `rate` 只会让宿主按错采样率播放（音调不对），`bits = 8` 会让宿主把 16 位数据当 8 位解释，`channels = 2` 更会让 `NesAudioOut::write()` 按两倍长度去读单声道缓冲区（越界读）。
-- `volume = 0` **不能静音**：`apply_options()` 允许 0，但 `NesCoreRuntime::start()` 把 0 视为"未设置"又改回 80。要静音请用 `audio = false` 或 `audio.enabled = false`。
+- `audio.rate` / `audio.bits` / `audio.channels` 仍然可以传（保持向后兼容），但**会被忽略**：格式恒为 22050Hz / 16bit / 单声道。APU 固定按 `core/apu2A03.h` 的 `SAMPLE_RATE = 22050` 生成 `int16_t[AUDIO_BUFFER_SIZE=256]` 单声道采样，链路上没有重采样和格式转换，所以 `apply_options()` 直接丢弃这三个值，`NesAudioOut::begin()` 也会把 spec 收敛回真实格式。`emu:info()` 里 `audio_rate/audio_bits/audio_channels` 报告的就是实际生效的值。要真支持多格式得先在 `audio/nes_audio_out.*` 里加转换。
+- `volume = 0` 就是静音。（旧版本里 `NesCoreRuntime::start()` 会把 0 当成"未设置"改回 80，已修。）也可以用 `audio = false` / `audio.enabled = false` 彻底关掉音频，那样还会省掉 APU 任务和队列开销。
 
 `emu:read_audio([max_bytes])` 返回 PCM 二进制字符串；`max_bytes` 默认 4096、clamp 到 256..8192 并按帧长对齐，没有数据时返回空串。
 
@@ -247,7 +247,7 @@ host.lua.*
 ## 当前限制
 
 - 音频已接入（`nes.AUDIO == true`），但回退到 `"lua"` 后端时必须由 Lua app 主动调用 `emu:read_audio()`，否则听不到声音且 `audio_dropped_bytes` 持续增长；自带的 `examples/nes-gamepad.lua` 目前**没有**消费这个队列，所以宿主没有 `host.audio` 时示例是无声的。
-- 音频格式固定 22050Hz / 16bit / 单声道，`audio.rate/bits/channels` 传非默认值不会生效（`channels = 2` 还会越界读，见「音频」一节）；`volume = 0` 也无法静音。
+- 音频格式固定 22050Hz / 16bit / 单声道，`audio.rate/bits/channels` 会被忽略（见「音频」一节）。
 - 帧率还没到 60fps（设备实测 50 帧左右），默认开启隔帧渲染（`nes_config.h` 的 `FRAMESKIP`）。
 - NES 2.0 ROM 暂不支持。
 - `module_abi.h` 必须和宿主固件完全匹配，否则可能加载失败或运行异常。

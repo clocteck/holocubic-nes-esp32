@@ -23,6 +23,10 @@ struct AudioSpec
 class NesAudioOut
 {
 public:
+    /// APU 实际产出的格式：22050Hz / int16 / 单声道，链路无转换。
+    static constexpr uint32_t kSourceSampleRate = 22050;
+    static constexpr size_t kFrameBytes = sizeof(int16_t);
+
     bool begin(const AudioSpec &spec, String *err = nullptr);
     void end();
 
@@ -45,6 +49,7 @@ private:
 
     bool beginHostAudio(const AudioSpec &spec, String *err);
     bool beginLuaQueue(const AudioSpec &spec, String *err);
+    size_t readLocked(uint8_t *dst, size_t max_bytes);
     bool writeBytes(const void *data, size_t bytes);
     bool enqueueBytes(const uint8_t *data, size_t bytes);
     void setFailure(const char *text);
@@ -56,6 +61,9 @@ private:
     size_t m_queue_capacity = 0;
     volatile size_t m_queue_head = 0;
     volatile size_t m_queue_tail = 0;
+    /// read() 在 Lua 任务、freeQueue() 在 core 任务，用这两个字段挡住 UAF。
+    volatile int32_t m_readers = 0;
+    volatile bool m_closing = false;
     uint32_t m_dropped_bytes = 0;
     Backend m_backend = Backend::None;
     AudioSpec m_spec = {};

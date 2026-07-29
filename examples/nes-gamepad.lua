@@ -114,10 +114,17 @@ local function create_dynmod_nes_adapter()
     end
 
     if APP.nes_emu and APP.nes_emu.stop then
-      pcall(function()
-        APP.nes_emu:stop()
+      -- 只有确实停成功才丢引用。stop 超时（core 卡住）时若把引用清了，
+      -- 旧 session 还在跑，mod.create() 只会一直报 "stop current session
+      -- first"，而 Lua 侧已经没有对象可以再调 stop 了。
+      local ok, result = pcall(function()
+        return APP.nes_emu:stop()
       end)
-      APP.nes_emu = nil
+      if ok and result ~= false and result ~= nil then
+        APP.nes_emu = nil
+      else
+        return nil, "stop previous nes session failed"
+      end
     end
 
     if type(mod.create) ~= "function" then
@@ -125,9 +132,13 @@ local function create_dynmod_nes_adapter()
     end
 
     local fps = tonumber(options and (options.target_fps or options.fps)) or 60
+    -- build_runtime_options() 声明了 transfer_rows，以前这里没往下传，
+    -- 模块一直用默认的 16 行。
+    local transfer_rows = tonumber(options and options.transfer_rows)
     local opts = {
       rom = path,
       fps = fps,
+      transfer_rows = transfer_rows,
       autorun = true,
       video = { x = 32, y = 0 },
       task_stack = 12288,

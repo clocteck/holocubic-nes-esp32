@@ -128,10 +128,8 @@ public:
         {
             m_options.audio_channels = 1;
         }
-        if (m_options.audio_volume_percent == 0)
-        {
-            m_options.audio_volume_percent = 80;
-        }
+        // 音量 0 是合法的“静音”，不能当成“未设置”。默认值由
+        // nes_module.c 的 session_set_defaults() 负责。
         if (m_options.audio_volume_percent > 100)
         {
             m_options.audio_volume_percent = 100;
@@ -280,7 +278,18 @@ public:
             setError("nes is not running", err, err_size);
             return false;
         }
-        if (m_bus)
+        /**
+         * 不能只看 m_bus 非空就返回成功：init(3) 会在 Bus 挂上、Bus::reset()
+         * 之前就返回，此时 m_bus 已非空但完全没复位。之后再 init(7) 会被
+         * 这里短路掉，于是 step()/resume 跑在未复位的 Bus 上。
+         * 改成比较「已完成到哪一级」。
+         */
+        // 完全就绪记为 8：level 7 只跑到 Bus::reset(4)，会在
+        // prepareRenderBuffer() 之前返回，不算完整初始化，不能和它同级，
+        // 否则 init(7) 之后再 init() 会被错误地短路掉。
+        // level 0（不限级）和 >=8 都表示「初始化到完全就绪」。
+        const uint32_t wanted = (level == 0u || level > 8u) ? 8u : level;
+        if (m_prepare_done_level >= wanted)
         {
             return true;
         }
@@ -483,7 +492,9 @@ private:
                 continue;
             }
 
-            if (!m_bus && !createCoreObjects())
+            // 只看 m_bus 非空是不够的：init(1..6) 可能留下一个未完全复位的
+            // Bus，直接跑帧等于在未复位状态上执行。
+            if (!m_core_ready && !createCoreObjects())
             {
                 m_prepare_level = 0;
                 m_running = false;
@@ -518,6 +529,13 @@ private:
                     copy_text(m_audio_error,
                               sizeof(m_audio_error),
                               audio_err.length() > 0 ? audio_err.c_str() : "nes audio failed");
+                    /**
+                     * 必须先停掉 APU 任务并摘掉 sink，再 end()。否则 APU 任务
+                     * 可能正卡在 m_audio.write() 里，而这里把 host stream
+                     * 关掉/把 Lua 队列 free 掉，直接踩空指针。
+                     */
+                    stopApuTask(500);
+                    m_bus->cpu.apu.setAudioSink(nullptr, nullptr);
                     m_audio.end();
                 }
             }
@@ -582,6 +600,8 @@ private:
         nes_port_set_host(m_host);
         setStage(StageInitBegin, "[nes.so] init begin");
         releaseCoreObjects();
+        m_prepare_done_level = 0;
+        m_core_ready = false;
 
         m_video.init();
         nes::VideoSpec spec = {};
@@ -606,6 +626,7 @@ private:
         if (m_prepare_level == 1)
         {
             m_loaded = true;
+            m_prepare_done_level = 1;
             return true;
         }
 
@@ -623,6 +644,7 @@ private:
         if (m_prepare_level == 2)
         {
             m_loaded = true;
+            m_prepare_done_level = 2;
             return true;
         }
 
@@ -663,6 +685,7 @@ private:
         if (m_prepare_level == 3)
         {
             m_loaded = true;
+            m_prepare_done_level = 3;
             setStage(StageBusReady, "[nes.so] bus attached");
             return true;
         }
@@ -682,12 +705,18 @@ private:
             m_audio.end();
         }
         m_loaded = true;
+        // reset_level>0 表示只跑到 Bus::reset 的某个子阶段，还不算完全就绪，
+        // 所以只能记 4..7；完整初始化单独记 8。
+        m_prepare_done_level = (reset_level == 0) ? 8u : (3u + reset_level);
+        m_core_ready = (reset_level == 0);
         setStage(StageBusReady, "[nes.so] bus ready");
         return true;
     }
 
     void releaseCoreObjects()
     {
+        m_core_ready = false;
+        m_prepare_done_level = 0;
         stopApuTask(500);
         if (m_bus)
         {
@@ -829,6 +858,8 @@ private:
     volatile uint32_t m_prepare_result = 0;
     volatile uint32_t m_prepare_level = 0;
     bool m_loaded = false;
+    volatile bool m_core_ready = false;
+    volatile uint32_t m_prepare_done_level = 0;
     uint8_t m_mapper_id = 0;
     int32_t m_state = CoreEmpty;
     uint32_t m_frames = 0;

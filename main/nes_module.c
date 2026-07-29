@@ -286,6 +286,14 @@ static void set_closure_field(lua_State *L,
                               module_lua_cfunction_t fn,
                               void *upvalue)
 {
+    /*
+     * 注意：这里**故意不**对 fn 调 nes_port_exec_ptr()。CLAUDE.md 的
+     * 「交给 host 的函数指针要先过 exec_ptr」是针对 task.create / mapper
+     * vtable 那条路径的；Lua 绑定这条路径现在不加转换就能正常工作
+     * （nes.create 等接口在真机上可用），说明宿主的 lua.pushcclosure
+     * 侧已经做了地址转换。再转一次会变成双重转换。
+     * 要改成显式转换，得先对着固件的 dynmod Lua 绑定确认一遍。
+     */
     host->lua.pushlightuserdata(L, upvalue);
     host->lua.pushcclosure(L, fn, 1);
     host->lua.setfield(L, -2, key);
@@ -586,8 +594,12 @@ static void apply_u32_option(int64_t value, uint32_t min_value, uint32_t max_val
  */
 static uint16_t clamp_transfer_rows_option(int64_t value)
 {
+    /*
+     * 只有 Lua 表里确实带了这个键才会调到这里，所以 0/负数是「显式传了非法值」，
+     * 不是「缺省」。按文档声明的 1..240 收敛，缺省值交给 session_set_defaults()。
+     */
     if (value <= 0) {
-        return NES_DEFAULT_TRANSFER_ROWS;
+        return 1;
     }
     if (value > NES_FRAME_HEIGHT) {
         return NES_FRAME_HEIGHT;
@@ -665,17 +677,20 @@ static void apply_options(lua_State *L, const module_host_api_v1 *host, nes_sess
             read_table_boolean(L, host, audio_index, "fallback", &fallback)) {
             session->audio_lua_fallback = fallback ? 1 : 0;
         }
-        if (read_table_integer(L, host, audio_index, "rate", &n) ||
-            read_table_integer(L, host, audio_index, "sample_rate", &n)) {
-            apply_u32_option(n, 1000, 96000, &session->audio_sample_rate);
-        }
-        if (read_table_integer(L, host, audio_index, "bits", &n) ||
-            read_table_integer(L, host, audio_index, "bits_per_sample", &n)) {
-            session->audio_bits_per_sample = (n <= 8) ? 8 : 16;
-        }
-        if (read_table_integer(L, host, audio_index, "channels", &n)) {
-            session->audio_channels = (n <= 1) ? 1 : 2;
-        }
+        /*
+         * rate / bits / channels 仍然接受（保持向后兼容），但 APU 只产出
+         * 22050Hz / 16bit / mono，链路里没有任何重采样或格式转换，
+         * NesAudioOut::begin() 也会把 spec 收敛回真实格式。所以这里直接
+         * 忽略传入值、保持 session 的默认，避免 emu:info() 报告一个
+         * 与实际输出不符的格式（以前 channels=2 会一路传到宿主 desc，
+         * 让宿主按立体声解析单声道数据）。
+         * 真要支持多格式得先在 audio/nes_audio_out.* 里加转换。
+         */
+        (void)read_table_integer(L, host, audio_index, "rate", &n);
+        (void)read_table_integer(L, host, audio_index, "sample_rate", &n);
+        (void)read_table_integer(L, host, audio_index, "bits", &n);
+        (void)read_table_integer(L, host, audio_index, "bits_per_sample", &n);
+        (void)read_table_integer(L, host, audio_index, "channels", &n);
         if (read_table_integer(L, host, audio_index, "volume", &n) ||
             read_table_integer(L, host, audio_index, "volume_percent", &n)) {
             session->audio_volume_percent = (n < 0) ? 0 : ((n > 100) ? 100 : (uint8_t)n);
