@@ -398,7 +398,9 @@ void Cpu6502::reset()
 	X = 0;
 	Y = 0;
 	SP = 0xFD;
-	status = 0x00 | U;
+	// 2A03 reset 会把 Interrupt Disable 置起来，否则 reset 向量里还没
+	// SEI 就可能被 IRQ 打断，和真机不一致。
+	status = 0x00 | U | I;
 
 	addr_rel = 0x0000;
 	addr_abs = 0x0000;

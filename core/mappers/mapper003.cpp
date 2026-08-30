@@ -47,7 +47,21 @@ void Mapper003_reset(Mapper* mapper)
     Mapper003_state* state = (Mapper003_state*)mapper->state;
 
     state->ptr_CHR_bank_8K = getBank(&state->CHR_cache_8K, 0, Mapper::ROM_TYPE::CHR_ROM);
-    state->cart->loadPRGBank(state->PRG_bank, 32*1024, 0);
+    /**
+     * number_PRG_banks 是 iNES 头里的 16KiB 块数。只有一块时不能直接读
+     * 32KiB——那样 $C000-$FFFF 会读到文件里紧跟在 PRG 后面的 CHR 数据，
+     * reset vector 都是错的。真机 CNROM 是把这 16KiB 镜像到上下两个窗口，
+     * 参考 mapper000 的做法。
+     */
+    if (state->number_PRG_banks > 1)
+    {
+        state->cart->loadPRGBank(state->PRG_bank, 32*1024, 0);
+    }
+    else
+    {
+        state->cart->loadPRGBank(state->PRG_bank, 16*1024, 0);
+        state->cart->loadPRGBank(state->PRG_bank + 16*1024, 16*1024, 0);
+    }
 }
 
 void Mapper003_dumpState(Mapper* mapper, File& state)

@@ -12,6 +12,15 @@ constexpr uint16_t Apu2A03::DMC_rate_lookup[16];
 Apu2A03::Apu2A03()
 {
     memset(audio_buffer, 0, sizeof(audio_buffer));
+    /**
+     * soundChannelSweeperClock() 靠 pulse_channel_number 区分两个方波的
+     * negate 语义（pulse1 是一补 -c-1，pulse2 是二补 -c）。这个字段以前
+     * 从来没被赋值，一直是 0，两个 negate 分支都是死代码——写了 negate 的
+     * 音效会把下降 sweep 当成上升 sweep。放在构造里赋值，保证任何
+     * reset 级别（Bus::reset 的 max_stage<3 不会调 apu.reset）都正确。
+     */
+    pulse1.sweep.pulse_channel_number = 1;
+    pulse2.sweep.pulse_channel_number = 2;
 }
 
 Apu2A03::~Apu2A03()
@@ -89,7 +98,7 @@ MOD_IRAM_ATTR void Apu2A03::cpuWrite(uint16_t addr, uint8_t data)
 		pulse1.seq.timer = pulse1.seq.reload;
 		pulse1.env.start_flag = true;	
 
-		if (pulse1_enable) pulse1.len_counter.timer = length_counter_lookup[data >> 3] + 1;
+		if (pulse1_enable) pulse1.len_counter.timer = length_counter_lookup[data >> 3];
 
 		// Restart envelope
 		pulse1.env.timer = pulse1.env.volume;
@@ -123,7 +132,7 @@ MOD_IRAM_ATTR void Apu2A03::cpuWrite(uint16_t addr, uint8_t data)
 		pulse2.seq.timer = pulse2.seq.reload;
 		pulse2.env.start_flag = true;
 
-		if (pulse2_enable) pulse2.len_counter.timer = length_counter_lookup[data >> 3] + 1;
+		if (pulse2_enable) pulse2.len_counter.timer = length_counter_lookup[data >> 3];
 
 		// Restart envelope
 		pulse2.env.timer = pulse2.env.volume;
@@ -144,11 +153,15 @@ MOD_IRAM_ATTR void Apu2A03::cpuWrite(uint16_t addr, uint8_t data)
 		triangle.seq.reload = ((triangle.seq.reload & 0x00FF) | (uint16_t)((data & 0x07)) << 8) + 1;
 		triangle.seq.timer = triangle.seq.reload;
 
-		if (triangle_enable) triangle.len_counter.timer = length_counter_lookup[data >> 3] + 1;
+		if (triangle_enable) triangle.len_counter.timer = length_counter_lookup[data >> 3];
 		triangle.lin_counter.reload_flag = true;
 		break;
 
 	case 0x400C:
+		// bit5 同时是 length halt 和 envelope loop（对齐 $4000 的处理）。
+		// 以前只写了 halt，循环包络衰减到 0 后不会回到 15，爆炸/风声之类
+		// 的持续音效会很快静音。
+		noise.env.loop = (data >> 5) & 0x01;
 		noise.len_counter.halt = (data >> 5) & 0x01;
 		noise.env.constant_volume = (data >> 4) & 0x01;
 		noise.env.volume = data & 0x0F;
@@ -162,7 +175,7 @@ MOD_IRAM_ATTR void Apu2A03::cpuWrite(uint16_t addr, uint8_t data)
 	case 0x400F:
 		noise.env.start_flag = true;
 
-		if (noise_enable) noise.len_counter.timer = length_counter_lookup[data >> 3] + 1;
+		if (noise_enable) noise.len_counter.timer = length_counter_lookup[data >> 3];
 		break;
 
 	case 0x4010:
@@ -608,9 +621,12 @@ inline void Apu2A03::linearCounterClock(linear_counter& lin_counter)
 
 inline void Apu2A03::setDMCBuffer()
 {
-	uint8_t value = bus->cpuRead(DMC.memory_reader.address);
+	// 先判空再读总线。原来顺序相反：样本播完后每次调用都会多发一次
+	// bus->cpuRead()，那是有副作用的（更新 open bus，还会打到 mapper
+	// 的读寄存器），而且读的是一个已经越过样本尾部的地址。
 	if (DMC.memory_reader.remaining_bytes <= 0) return;
 
+	uint8_t value = bus->cpuRead(DMC.memory_reader.address);
     DMC.sample_buffer = value;
     DMC.sample_buffer_empty = false;
 

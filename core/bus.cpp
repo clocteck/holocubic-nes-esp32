@@ -83,9 +83,15 @@ MOD_IRAM_ATTR uint8_t Bus::cpuRead(uint16_t addr)
     }
     else if (addr == 0x4016)
     {
+        /**
+         * 标准手柄移位寄存器只有 8 位，移空之后 D0 恒为 1（真机是把 1
+         * 从串行口移进来）。原来右移 8 次后 controller_state 变 0，之后
+         * 一直回 $40，依赖「读到 1 表示按钮读完」的游戏（如 Paperboy）
+         * 会一直读不到结束标记。这里用 0xFF 高位填充实现同样效果。
+         */
         uint8_t value = controller_state & 1;
         if (!controller_strobe)
-            controller_state >>= 1;
+            controller_state = (uint8_t)((controller_state >> 1) | 0x80);
         data = value | 0x40;
         handled = true;
     }

@@ -32,7 +32,13 @@ inline void Ppu2C02::ppuWrite(uint16_t addr, uint8_t data)
     else if (addr >= 0x3F00 && addr <= 0x3FFF)
     {
         addr = palette_mirror[addr & 0x001F];
-        palette_table[addr] = data;
+        /**
+         * NES 调色板 RAM 只有 6 位。这里必须掩掉高 2 位：
+         * 渲染路径直接用 palette_table 的值当 nes_palette[emphasize][64]
+         * 的下标（finishScanline / bg_color），存 8 位原值会让下标最大到
+         * 255，越界读出整张 palette 表之外的 rodata。
+         */
+        palette_table[addr] = data & 0x3F;
     }
 }
 

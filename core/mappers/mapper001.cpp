@@ -114,7 +114,10 @@ IRAM_ATTR bool Mapper001_cpuWrite(Mapper* mapper, uint16_t addr, uint8_t data)
                 if (state->CHR_ROM_bank_mode == 0)
                 {
                     if (state->number_CHR_banks == 0) Mapper001_bindChrRamWindows(state);
-                    else state->ptr_8K_CHR_bank = getBank(&state->CHR_8K_cache, state->CHR_bank_0 & 0x1E, Mapper::ROM_TYPE::CHR_ROM);
+                    // 8KiB 模式忽略寄存器 bit0，但 CHR_8K_cache 的 bank 单位
+                    // 已经是 8KiB，所以要右移一位。原来直接传 reg&0x1E，
+                    // 选出来的 bank 号是正确值的两倍。
+                    else state->ptr_8K_CHR_bank = getBank(&state->CHR_8K_cache, (state->CHR_bank_0 & 0x1E) >> 1, Mapper::ROM_TYPE::CHR_ROM);
                 }
                 else
                 {
